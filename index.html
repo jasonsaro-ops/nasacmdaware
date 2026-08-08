@@ -3,307 +3,112 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="description" content="NASA Mission Control Dashboard – Live data from NASA Open APIs, ISS tracking, mission updates" />
-  <title>NASA Mission Control Dashboard</title>
-  
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+  <title>NASA Mission Control</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <link rel="stylesheet" href="css/styles.css" />
 </head>
 <body>
-  <!-- ========== HEADER ========== -->
-  <header class="mc-header">
-    <div class="header-left">
-      <div class="nasa-logo">
-        <!-- NASA Meatball Logo (simplified official style) -->
-        <svg class="meatball" viewBox="0 0 100 100" width="52" height="52" aria-label="NASA logo">
-          <defs>
-            <linearGradient id="meatballBlue" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stop-color="#0b3d91"/>
-              <stop offset="100%" stop-color="#062a66"/>
-            </linearGradient>
-          </defs>
-          <!-- Outer red ring -->
-          <circle cx="50" cy="50" r="48" fill="none" stroke="#fc3d21" stroke-width="4"/>
-          <!-- Blue field -->
-          <circle cx="50" cy="50" r="44" fill="url(#meatballBlue)"/>
-          <!-- White orbital path -->
-          <ellipse cx="50" cy="50" rx="38" ry="18" fill="none" stroke="#fff" stroke-width="2.2" transform="rotate(-25 50 50)"/>
-          <!-- Red vector wing -->
-          <path d="M18 58 Q50 28 82 42 L78 48 Q50 38 22 62 Z" fill="#fc3d21"/>
-          <!-- NASA text -->
-          <text x="50" y="56" text-anchor="middle" font-family="Arial Black, Arial, sans-serif" font-size="16" font-weight="900" fill="#fff" letter-spacing="1">NASA</text>
-        </svg>
-        <div class="logo-text">
-          <span class="logo-main">NASA</span>
-          <span class="logo-sub">MISSION CONTROL</span>
-        </div>
+  <!-- TOP BAR -->
+  <header class="topbar">
+    <div class="brand">
+      <svg class="meatball" viewBox="0 0 100 100" width="36" height="36" aria-label="NASA">
+        <circle cx="50" cy="50" r="48" fill="none" stroke="#fc3d21" stroke-width="3.5"/>
+        <circle cx="50" cy="50" r="44" fill="#0b3d91"/>
+        <ellipse cx="50" cy="50" rx="36" ry="16" fill="none" stroke="#fff" stroke-width="2" transform="rotate(-28 50 50)"/>
+        <path d="M20 56 Q50 30 80 44 L76 50 Q50 40 24 60 Z" fill="#fc3d21"/>
+        <text x="50" y="55" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="15" font-weight="700" fill="#fff" letter-spacing="0.5">NASA</text>
+      </svg>
+      <div>
+        <div class="brand-title">MISSION CONTROL</div>
+        <div class="brand-sub">OPEN DATA OPERATIONS</div>
       </div>
     </div>
-
-    <div class="header-center">
-      <h1 class="dashboard-title">OPEN DATA OPERATIONS</h1>
-      <div class="status-row">
-        <span class="status-pill online" id="system-status">
-          <span class="status-dot"></span> SYSTEMS NOMINAL
-        </span>
-        <span class="status-pill" id="last-refresh">LAST UPDATE: --:--:-- UTC</span>
-        <span class="status-pill" id="alert-status" title="Audio alerts">🔔 ALERTS ON</span>
-      </div>
+    <div class="top-status">
+      <span class="pill online" id="sys-status"><i></i> NOMINAL</span>
+      <span class="pill" id="last-upd">—</span>
     </div>
-
-    <div class="header-right">
-      <div class="clock-block">
-        <div class="clock-label">UTC</div>
-        <div class="clock-time" id="utc-clock">00:00:00</div>
-      </div>
-      <div class="clock-block">
-        <div class="clock-label">LOCAL</div>
-        <div class="clock-time" id="local-clock">00:00:00</div>
-      </div>
-      <button class="btn-refresh" id="btn-refresh" title="Refresh all data">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M23 4v6h-6M1 20v-6h6"/>
-          <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
-        </svg>
-        REFRESH
-      </button>
+    <div class="top-clocks">
+      <div><span class="clk-l">UTC</span><span class="clk" id="utc">00:00:00</span></div>
+      <div><span class="clk-l">LOCAL</span><span class="clk" id="loc">00:00:00</span></div>
+      <button class="btn" id="btn-refresh" title="Refresh">↻</button>
+      <button class="btn" id="btn-audio" title="Toggle alerts">🔔</button>
     </div>
   </header>
 
-  <!-- ========== MAIN GRID ========== -->
-  <main class="mc-grid">
-
-    <!-- APOD -->
-    <section class="panel panel-apod" id="panel-apod">
-      <div class="panel-header">
-        <h2><span class="panel-id">01</span> ASTRONOMY PICTURE OF THE DAY</h2>
-        <span class="panel-badge" id="apod-date">--</span>
-      </div>
-      <div class="panel-body apod-body">
-        <div class="apod-media" id="apod-media">
-          <div class="loading-skeleton media-skeleton"></div>
-        </div>
-        <div class="apod-info">
-          <h3 id="apod-title">Loading…</h3>
-          <p id="apod-explanation" class="apod-text">Retrieving data from NASA APOD service…</p>
-          <div class="apod-meta" id="apod-meta"></div>
+  <!-- MAIN — compact single-monitor grid -->
+  <main class="console">
+    <!-- LEFT COLUMN: primary maps -->
+    <section class="col maps">
+      <div class="tile tile-iss" data-panel="iss">
+        <div class="tile-h"><span>ISS TRACK</span><span class="tag" id="iss-vis">—</span></div>
+        <div id="iss-map" class="map"></div>
+        <div class="tile-stats" id="iss-stats">
+          <span>LAT <b id="iss-lat">—</b></span>
+          <span>LON <b id="iss-lon">—</b></span>
+          <span>ALT <b id="iss-alt">—</b> km</span>
+          <span>VEL <b id="iss-vel">—</b> km/h</span>
         </div>
       </div>
-    </section>
-
-    <!-- Near-Earth Objects -->
-    <section class="panel panel-neo" id="panel-neo">
-      <div class="panel-header">
-        <h2><span class="panel-id">02</span> NEAR-EARTH OBJECTS</h2>
-        <span class="panel-badge neo-count" id="neo-count">-- objects</span>
-      </div>
-      <div class="panel-body">
-        <div class="neo-summary" id="neo-summary">
-          <div class="stat-box">
-            <div class="stat-value" id="neo-total">—</div>
-            <div class="stat-label">THIS WEEK</div>
-          </div>
-          <div class="stat-box hazardous">
-            <div class="stat-value" id="neo-hazardous">—</div>
-            <div class="stat-label">POTENTIALLY HAZARDOUS</div>
-          </div>
-          <div class="stat-box">
-            <div class="stat-value" id="neo-closest">—</div>
-            <div class="stat-label">CLOSEST (LD)</div>
-          </div>
-        </div>
-        <div class="table-wrap">
-          <table class="data-table" id="neo-table">
-            <thead>
-              <tr>
-                <th>NAME</th>
-                <th>DATE</th>
-                <th>DIST (LD)</th>
-                <th>VEL (km/s)</th>
-                <th>SIZE (m)</th>
-                <th>PHA</th>
-              </tr>
-            </thead>
-            <tbody id="neo-tbody">
-              <tr><td colspan="6" class="loading-cell">Acquiring NEO feed…</td></tr>
-            </tbody>
-          </table>
+      <div class="tile tile-neo" data-panel="neo">
+        <div class="tile-h"><span>NEAR-EARTH OBJECTS</span><span class="tag" id="neo-n">—</span></div>
+        <div id="neo-map" class="map"></div>
+        <div class="tile-stats">
+          <span>WEEK <b id="neo-tot">—</b></span>
+          <span>PHA <b id="neo-pha" class="warn">—</b></span>
+          <span>CLOSEST <b id="neo-close">—</b> LD</span>
         </div>
       </div>
     </section>
 
-    <!-- ISS TRACKER -->
-    <section class="panel panel-iss" id="panel-iss">
-      <div class="panel-header">
-        <h2><span class="panel-id">03</span> ISS LIVE TRACKER</h2>
-        <span class="panel-badge" id="iss-visibility">—</span>
+    <!-- CENTER: data tiles -->
+    <section class="col data">
+      <div class="tile clickable" data-panel="apod">
+        <div class="tile-h"><span>01 APOD</span><span class="tag" id="apod-d">—</span></div>
+        <div class="tile-body" id="apod-prev"><div class="skel"></div></div>
       </div>
-      <div class="panel-body iss-body">
-        <div id="iss-map" class="iss-map"></div>
-        <div class="iss-stats">
-          <div class="stat-box">
-            <div class="stat-value" id="iss-lat">—</div>
-            <div class="stat-label">LATITUDE</div>
-          </div>
-          <div class="stat-box">
-            <div class="stat-value" id="iss-lon">—</div>
-            <div class="stat-label">LONGITUDE</div>
-          </div>
-          <div class="stat-box">
-            <div class="stat-value" id="iss-alt">—</div>
-            <div class="stat-label">ALTITUDE (km)</div>
-          </div>
-          <div class="stat-box">
-            <div class="stat-value" id="iss-vel">—</div>
-            <div class="stat-label">VELOCITY (km/h)</div>
-          </div>
-          <div class="stat-box">
-            <div class="stat-value" id="iss-foot">—</div>
-            <div class="stat-label">FOOTPRINT (km)</div>
-          </div>
-          <div class="stat-box">
-            <div class="stat-value" id="iss-crew">—</div>
-            <div class="stat-label">CREW ONBOARD</div>
-          </div>
-        </div>
+      <div class="tile clickable" data-panel="epic">
+        <div class="tile-h"><span>02 EPIC EARTH</span><span class="tag" id="epic-d">—</span></div>
+        <div class="tile-body epic-prev" id="epic-prev"><div class="skel"></div></div>
+      </div>
+      <div class="tile clickable" data-panel="donki">
+        <div class="tile-h"><span>03 SPACE WEATHER</span><span class="tag" id="donki-n">—</span></div>
+        <div class="tile-body list" id="donki-prev"></div>
+      </div>
+      <div class="tile clickable" data-panel="eonet">
+        <div class="tile-h"><span>04 NATURAL EVENTS</span><span class="tag" id="eonet-n">—</span></div>
+        <div class="tile-body list" id="eonet-prev"></div>
       </div>
     </section>
 
-    <!-- ISS LIVE CAMERAS -->
-    <section class="panel panel-iss-cams" id="panel-iss-cams">
-      <div class="panel-header">
-        <h2><span class="panel-id">04</span> ISS LIVE CAMERA FEEDS</h2>
-        <span class="panel-badge">EXTERNAL HD</span>
+    <!-- RIGHT: feeds & news -->
+    <section class="col feeds">
+      <div class="tile clickable" data-panel="missions">
+        <div class="tile-h"><span>05 MISSION DIGEST</span><span class="tag" id="mis-n">—</span></div>
+        <div class="tile-body list" id="mis-prev"></div>
       </div>
-      <div class="panel-body cams-body">
-        <div class="cam-grid">
-          <div class="cam-slot">
-            <div class="cam-label">ISS HD EARTH VIEW</div>
-            <iframe id="cam1" src="https://www.youtube.com/embed/awQzjn72bI0?autoplay=1&mute=1" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen loading="lazy"></iframe>
-          </div>
-          <div class="cam-slot">
-            <div class="cam-label">ISS LIVE (ALT)</div>
-            <iframe id="cam2" src="https://www.youtube.com/embed/M3HKLzjvKPc?autoplay=1&mute=1" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen loading="lazy"></iframe>
-          </div>
+      <div class="tile clickable" data-panel="jpl">
+        <div class="tile-h"><span>06 JPL / ROBOTIC</span></div>
+        <div class="tile-body list" id="jpl-prev"></div>
+      </div>
+      <div class="tile clickable" data-panel="cams">
+        <div class="tile-h"><span>07 LIVE CAMERAS</span></div>
+        <div class="tile-body cams-mini">
+          <div class="cam-thumb">ISS HD</div>
+          <div class="cam-thumb">ISS ALT</div>
+          <div class="cam-thumb">JPL BAY</div>
         </div>
-        <p class="cam-note">Feeds switch to recorded Earth views when the station is in eclipse or cameras are offline for operations. Audio muted by default.</p>
+      </div>
+      <div class="tile clickable" data-panel="media">
+        <div class="tile-h"><span>08 MEDIA LIBRARY</span></div>
+        <div class="tile-body" id="media-prev"><div class="skel"></div></div>
       </div>
     </section>
-
-    <!-- EPIC -->
-    <section class="panel panel-epic" id="panel-epic">
-      <div class="panel-header">
-        <h2><span class="panel-id">05</span> EPIC — EARTH FROM L1</h2>
-        <span class="panel-badge" id="epic-date">--</span>
-      </div>
-      <div class="panel-body epic-body">
-        <div class="epic-image-wrap" id="epic-media">
-          <div class="loading-skeleton media-skeleton"></div>
-        </div>
-        <div class="epic-caption" id="epic-caption">DSCOVR spacecraft · Lagrange Point 1</div>
-      </div>
-    </section>
-
-    <!-- Space Weather DONKI -->
-    <section class="panel panel-donki" id="panel-donki">
-      <div class="panel-header">
-        <h2><span class="panel-id">06</span> SPACE WEATHER · DONKI</h2>
-        <span class="panel-badge" id="donki-count">-- events</span>
-      </div>
-      <div class="panel-body">
-        <div class="event-list" id="donki-list">
-          <div class="loading-cell">Querying DONKI database…</div>
-        </div>
-      </div>
-    </section>
-
-    <!-- EONET -->
-    <section class="panel panel-eonet" id="panel-eonet">
-      <div class="panel-header">
-        <h2><span class="panel-id">07</span> EARTH NATURAL EVENTS · EONET</h2>
-        <span class="panel-badge" id="eonet-count">-- active</span>
-      </div>
-      <div class="panel-body eonet-body">
-        <div id="eonet-map" class="eonet-map"></div>
-        <div class="event-list eonet-list" id="eonet-list">
-          <div class="loading-cell">Loading natural events…</div>
-        </div>
-      </div>
-    </section>
-
-    <!-- MISSION DIGEST -->
-    <section class="panel panel-missions" id="panel-missions">
-      <div class="panel-header">
-        <h2><span class="panel-id">08</span> MISSION DIGEST · ISS · ARTEMIS · FLEET</h2>
-        <span class="panel-badge" id="mission-count">-- updates</span>
-      </div>
-      <div class="panel-body">
-        <div class="mission-tabs">
-          <button class="tab active" data-filter="all">ALL</button>
-          <button class="tab" data-filter="iss">ISS</button>
-          <button class="tab" data-filter="artemis">ARTEMIS</button>
-          <button class="tab" data-filter="other">OTHER</button>
-        </div>
-        <div class="event-list mission-list" id="mission-list">
-          <div class="loading-cell">Fetching mission updates…</div>
-        </div>
-      </div>
-    </section>
-
-    <!-- JPL SECTION -->
-    <section class="panel panel-jpl" id="panel-jpl">
-      <div class="panel-header">
-        <h2><span class="panel-id">09</span> JPL MISSIONS &amp; CLEAN ROOM</h2>
-        <span class="panel-badge">ROBOTIC EXPLORATION</span>
-      </div>
-      <div class="panel-body jpl-body">
-        <div class="jpl-cams">
-          <div class="cam-slot">
-            <div class="cam-label">JPL HIGH BAY / CLEAN ROOM</div>
-            <iframe src="https://www.youtube.com/embed/live_stream?channel=UCryGek9-xMZ4tqPL4r6_B1w&autoplay=1&mute=1" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen loading="lazy"></iframe>
-          </div>
-        </div>
-        <div class="event-list jpl-list" id="jpl-list">
-          <div class="loading-cell">Loading JPL updates…</div>
-        </div>
-      </div>
-    </section>
-
-    <!-- NASA Media Search -->
-    <section class="panel panel-media" id="panel-media">
-      <div class="panel-header">
-        <h2><span class="panel-id">10</span> NASA IMAGE &amp; VIDEO LIBRARY</h2>
-      </div>
-      <div class="panel-body">
-        <div class="search-bar">
-          <input type="text" id="media-query" placeholder="Search NASA media (e.g. Apollo, Mars, Hubble)…" value="James Webb" />
-          <button class="btn-search" id="btn-media-search">SEARCH</button>
-        </div>
-        <div class="media-grid" id="media-grid">
-          <div class="loading-cell">Ready for search…</div>
-        </div>
-      </div>
-    </section>
-
   </main>
 
-  <footer class="mc-footer">
-    <div class="footer-left">
-      Data: <a href="https://api.nasa.gov" target="_blank" rel="noopener">api.nasa.gov</a> · 
-      <a href="https://wheretheiss.at" target="_blank" rel="noopener">WhereTheISS.at</a> · 
-      <a href="https://spaceflightnewsapi.net" target="_blank" rel="noopener">Spaceflight News</a> · 
-      EONET · DONKI · EPIC
-    </div>
-    <div class="footer-right">
-      Audio alerts via Web Audio · Auto-refresh enabled · GitHub Pages ready
-    </div>
-  </footer>
+  <!-- FLOATING WINDOW LAYER -->
+  <div id="float-layer"></div>
 
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="js/config.js"></script>
   <script src="js/app.js"></script>
 </body>

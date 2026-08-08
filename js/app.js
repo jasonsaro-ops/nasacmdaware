@@ -1,598 +1,498 @@
-/**
- * NASA Mission Control Dashboard
- * Live APIs · ISS tracking · Mission digest · Audio alerts
- */
 (function () {
   'use strict';
+  const $ = s => document.querySelector(s);
+  const $$ = s => document.querySelectorAll(s);
 
-  const $ = (sel) => document.querySelector(sel);
-  const $$ = (sel) => document.querySelectorAll(sel);
+  let issMap, neoMap, issMarker, issTrail = [], issLine, neoLayer;
+  let neoData = [], newsCache = [], audioCtx = null;
+  let zTop = 300;
 
-  // ---------- State ----------
-  let issMap = null;
-  let issMarker = null;
-  let issTrail = [];
-  let issTrailLine = null;
-  let eonetMap = null;
-  let eonetLayer = null;
-  let lastNewsIds = new Set();
-  let audioCtx = null;
-  let missionFilter = 'all';
-  let allMissionItems = [];
+  const utc = () => new Date().toISOString().substr(11, 8);
+  const loc = () => new Date().toLocaleTimeString('en-GB', { hour12: false });
+  const today = () => new Date().toISOString().slice(0, 10);
+  const addDays = n => { const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
+  const ago = n => addDays(-n);
 
-  // ---------- Utils ----------
-  function formatUTC(d = new Date()) { return d.toISOString().substr(11, 8); }
-  function formatLocal(d = new Date()) { return d.toLocaleTimeString('en-GB', { hour12: false }); }
-  function todayISO() { return new Date().toISOString().slice(0, 10); }
-  function daysAgoISO(n) {
-    const d = new Date(); d.setDate(d.getDate() - n); return d.toISOString().slice(0, 10);
-  }
-  function daysAheadISO(n) {
-    const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10);
+  async function get(url) {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
+    return r.json();
   }
 
-  async function fetchJSON(url) {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-    return res.json();
-  }
-
-  function setLastRefresh() {
-    $('#last-refresh').textContent = `LAST UPDATE: ${formatUTC()} UTC`;
-  }
-
-  // ---------- NASA-style chime (Web Audio) ----------
-  function playChime() {
-    if (!CONFIG.audioEnabled) return;
+  function chime() {
+    if (!CONFIG.audio) return;
     try {
       if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      const now = audioCtx.currentTime;
-
-      // Two-tone "mission control" style alert
-      const tones = [
-        { freq: 880, start: 0, dur: 0.12 },
-        { freq: 1174.7, start: 0.14, dur: 0.18 },
-        { freq: 880, start: 0.36, dur: 0.1 }
-      ];
-
-      tones.forEach(t => {
-        const osc = audioCtx.createOscillator();
-        const gain = audioCtx.createGain();
-        osc.type = 'sine';
-        osc.frequency.value = t.freq;
-        gain.gain.setValueAtTime(0, now + t.start);
-        gain.gain.linearRampToValueAtTime(0.25, now + t.start + 0.02);
-        gain.gain.exponentialRampToValueAtTime(0.001, now + t.start + t.dur);
-        osc.connect(gain);
-        gain.connect(audioCtx.destination);
-        osc.start(now + t.start);
-        osc.stop(now + t.start + t.dur + 0.05);
+      const t = audioCtx.currentTime;
+      [[880, 0, 0.1], [1175, 0.12, 0.15], [880, 0.3, 0.08]].forEach(([f, s, d]) => {
+        const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+        o.type = 'sine'; o.frequency.value = f;
+        g.gain.setValueAtTime(0, t + s);
+        g.gain.linearRampToValueAtTime(0.22, t + s + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.001, t + s + d);
+        o.connect(g); g.connect(audioCtx.destination);
+        o.start(t + s); o.stop(t + s + d + 0.05);
       });
-    } catch (e) {
-      console.warn('Audio chime failed', e);
-    }
+    } catch (_) {}
   }
 
-  // ---------- Clocks ----------
-  function updateClocks() {
-    $('#utc-clock').textContent = formatUTC();
-    $('#local-clock').textContent = formatLocal();
-  }
+  // —— Clocks ——
+  setInterval(() => { $('#utc').textContent = utc(); $('#loc').textContent = loc(); }, 1000);
 
-  // ---------- APOD ----------
-  async function loadAPOD() {
-    const mediaEl = $('#apod-media');
-    const titleEl = $('#apod-title');
-    const explEl = $('#apod-explanation');
-    const metaEl = $('#apod-meta');
-    const dateBadge = $('#apod-date');
-    try {
-      const data = await fetchJSON(`${CONFIG.endpoints.apod}?api_key=${CONFIG.API_KEY}`);
-      dateBadge.textContent = data.date || '—';
-      titleEl.textContent = data.title || 'Untitled';
-      explEl.textContent = data.explanation || '';
-      let mediaHtml = '';
-      if (data.media_type === 'video') {
-        const url = data.url || '';
-        if (url.includes('youtube') || url.includes('youtu.be')) {
-          const embed = url.replace('watch?v=', 'embed/').replace('youtu.be/', 'youtube.com/embed/');
-          mediaHtml = `<iframe src="${embed}" frameborder="0" allowfullscreen></iframe>`;
-        } else {
-          mediaHtml = `<video controls src="${url}"></video>`;
-        }
-      } else {
-        mediaHtml = `<img src="${data.hdurl || data.url}" alt="${data.title || 'APOD'}" loading="lazy" />`;
-      }
-      mediaEl.innerHTML = mediaHtml;
-      let meta = [];
-      if (data.copyright) meta.push('© ' + data.copyright);
-      if (data.media_type) meta.push(data.media_type.toUpperCase());
-      metaEl.textContent = meta.join(' · ');
-    } catch (err) {
-      console.error('APOD', err);
-      mediaEl.innerHTML = `<div class="error-msg">APOD unavailable<br>${err.message}</div>`;
-    }
-  }
+  // —— Floating windows ——
+  function openFloat(id, title, html, w = 520, h = 400) {
+    let el = document.getElementById('f-' + id);
+    if (el) { el.style.zIndex = ++zTop; return el; }
+    el = document.createElement('div');
+    el.className = 'float';
+    el.id = 'f-' + id;
+    el.style.width = w + 'px';
+    el.style.height = h + 'px';
+    el.style.left = Math.max(20, (window.innerWidth - w) / 2 - 40 + Math.random() * 80) + 'px';
+    el.style.top = Math.max(50, (window.innerHeight - h) / 2 - 30 + Math.random() * 60) + 'px';
+    el.style.zIndex = ++zTop;
+    el.innerHTML = `<div class="float-h"><span>${title}</span><button class="x" title="Close">×</button></div><div class="float-b">${html}</div>`;
+    $('#float-layer').appendChild(el);
 
-  // ---------- NEO ----------
-  async function loadNEO() {
-    const tbody = $('#neo-tbody');
-    try {
-      const start = todayISO();
-      const end = daysAheadISO(CONFIG.neoDaysAhead);
-      const data = await fetchJSON(`${CONFIG.endpoints.neoFeed}?start_date=${start}&end_date=${end}&api_key=${CONFIG.API_KEY}`);
-      const nearObjects = data.near_earth_objects || {};
-      let all = [];
-      let hazardousCount = 0;
-      let minLd = Infinity;
-
-      Object.keys(nearObjects).forEach(date => {
-        nearObjects[date].forEach(neo => {
-          const approach = neo.close_approach_data?.[0];
-          if (!approach) return;
-          const missKm = parseFloat(approach.miss_distance?.kilometers || 0);
-          const ld = missKm / 384400;
-          const vel = parseFloat(approach.relative_velocity?.kilometers_per_second || 0);
-          const diamMin = neo.estimated_diameter?.meters?.estimated_diameter_min || 0;
-          const diamMax = neo.estimated_diameter?.meters?.estimated_diameter_max || 0;
-          const avgSize = Math.round((diamMin + diamMax) / 2);
-          const isHaz = neo.is_potentially_hazardous_asteroid;
-          if (isHaz) hazardousCount++;
-          if (ld < minLd) minLd = ld;
-          all.push({
-            name: (neo.name || '').replace(/[()]/g, ''),
-            date: approach.close_approach_date,
-            ld, vel, size: avgSize, hazardous: isHaz
-          });
-        });
-      });
-
-      all.sort((a, b) => a.ld - b.ld);
-      $('#neo-total').textContent = all.length;
-      $('#neo-hazardous').textContent = hazardousCount;
-      $('#neo-closest').textContent = isFinite(minLd) ? minLd.toFixed(2) : '—';
-      $('#neo-count').textContent = `${all.length} objects`;
-
-      if (!all.length) {
-        tbody.innerHTML = `<tr><td colspan="6" class="loading-cell">No close approaches</td></tr>`;
-        return;
-      }
-      tbody.innerHTML = all.slice(0, 15).map(n => `
-        <tr>
-          <td title="${n.name}">${n.name.length > 18 ? n.name.slice(0, 16) + '…' : n.name}</td>
-          <td>${n.date}</td>
-          <td>${n.ld.toFixed(2)}</td>
-          <td>${n.vel.toFixed(1)}</td>
-          <td>${n.size}</td>
-          <td class="${n.hazardous ? 'pha-yes' : 'pha-no'}">${n.hazardous ? 'YES' : '—'}</td>
-        </tr>`).join('');
-    } catch (err) {
-      console.error('NEO', err);
-      tbody.innerHTML = `<tr><td colspan="6" class="error-msg">${err.message}</td></tr>`;
-    }
-  }
-
-  // ---------- EPIC ----------
-  async function loadEPIC() {
-    const mediaEl = $('#epic-media');
-    try {
-      const images = await fetchJSON(`${CONFIG.endpoints.epicNatural}?api_key=${CONFIG.API_KEY}`);
-      if (!Array.isArray(images) || !images.length) {
-        mediaEl.innerHTML = `<div class="error-msg">No recent EPIC imagery</div>`;
-        return;
-      }
-      const latest = images[0];
-      const [y, m, d] = latest.date.split(' ')[0].split('-');
-      const imgUrl = `${CONFIG.endpoints.epicArchive}/${y}/${m}/${d}/png/${latest.image}.png?api_key=${CONFIG.API_KEY}`;
-      mediaEl.innerHTML = `<img src="${imgUrl}" alt="Earth from DSCOVR" loading="lazy" />`;
-      $('#epic-date').textContent = latest.date.split(' ')[0];
-      const c = latest.centroid_coordinates;
-      $('#epic-caption').textContent = c
-        ? `DSCOVR · L1 · Lat ${c.lat.toFixed(1)}° Lon ${c.lon.toFixed(1)}°`
-        : 'DSCOVR · Lagrange Point 1';
-    } catch (err) {
-      console.error('EPIC', err);
-      mediaEl.innerHTML = `<div class="error-msg">${err.message}</div>`;
-    }
-  }
-
-  // ---------- DONKI ----------
-  async function loadDONKI() {
-    const listEl = $('#donki-list');
-    try {
-      const start = daysAgoISO(7);
-      const notes = await fetchJSON(
-        `${CONFIG.endpoints.donkiNotifications}?startDate=${start}&endDate=${todayISO()}&api_key=${CONFIG.API_KEY}`
-      );
-      let cmes = [];
-      try {
-        cmes = await fetchJSON(
-          `${CONFIG.endpoints.donkiCME}?startDate=${start}&endDate=${todayISO()}&api_key=${CONFIG.API_KEY}`
-        );
-      } catch (_) {}
-
-      const events = [];
-      if (Array.isArray(notes)) {
-        notes.slice(0, 10).forEach(n => {
-          events.push({
-            type: (n.messageType || 'NOTIFICATION').toUpperCase(),
-            title: n.messageID || n.messageType || 'Notice',
-            time: n.messageIssueTime || '',
-            body: (n.messageBody || '').slice(0, 120)
-          });
-        });
-      }
-      if (Array.isArray(cmes)) {
-        cmes.slice(0, 5).forEach(c => {
-          const speed = c.cmeAnalyses?.[0]?.speed;
-          events.push({
-            type: 'CME',
-            title: `Coronal Mass Ejection${speed ? ' · ' + Math.round(speed) + ' km/s' : ''}`,
-            time: c.startTime || '',
-            body: (c.note || 'CME event').slice(0, 100)
-          });
-        });
-      }
-      events.sort((a, b) => (b.time || '').localeCompare(a.time || ''));
-      $('#donki-count').textContent = `${events.length} events`;
-
-      if (!events.length) {
-        listEl.innerHTML = `<div class="loading-cell">No recent events</div>`;
-        return;
-      }
-      listEl.innerHTML = events.slice(0, 8).map(e => {
-        const cls = e.type.includes('CME') ? 'cme' : e.type.includes('FLARE') ? 'flare' : 'notification';
-        return `<div class="event-card">
-          <div class="event-type ${cls}">${e.type}</div>
-          <div class="event-title">${e.title}</div>
-          <div class="event-meta">${(e.time || '').replace('T', ' ').slice(0, 16)} UTC${e.body ? ' · ' + e.body : ''}</div>
-        </div>`;
-      }).join('');
-    } catch (err) {
-      console.error('DONKI', err);
-      listEl.innerHTML = `<div class="error-msg">${err.message}</div>`;
-    }
-  }
-
-  // ---------- EONET ----------
-  function initEonetMap() {
-    if (eonetMap) return;
-    eonetMap = L.map('eonet-map', { zoomControl: false }).setView([20, 0], 1);
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-      attribution: '© OSM · CARTO', maxZoom: 8
-    }).addTo(eonetMap);
-    L.control.zoom({ position: 'bottomright' }).addTo(eonetMap);
-    eonetLayer = L.layerGroup().addTo(eonetMap);
-  }
-
-  async function loadEONET() {
-    const listEl = $('#eonet-list');
-    try {
-      initEonetMap();
-      eonetLayer.clearLayers();
-      const data = await fetchJSON(`${CONFIG.endpoints.eonetEvents}?status=open&limit=25`);
-      const events = data.events || [];
-      $('#eonet-count').textContent = `${events.length} active`;
-
-      const colors = {
-        wildfires: '#ff6d00', severeStorms: '#7c4dff', volcanoes: '#fc3d21',
-        floods: '#00bcd4', earthquakes: '#ffab00', landslides: '#8d6e63'
-      };
-
-      if (!events.length) {
-        listEl.innerHTML = `<div class="loading-cell">No open events</div>`;
-        return;
-      }
-
-      listEl.innerHTML = events.slice(0, 10).map(ev => {
-        const cat = ev.categories?.[0];
-        const geo = ev.geometry?.[ev.geometry.length - 1];
-        const coords = geo?.coordinates;
-        const date = geo?.date ? geo.date.slice(0, 10) : '';
-        if (coords && coords.length >= 2) {
-          const color = colors[cat?.id] || '#00d4ff';
-          L.circleMarker([coords[1], coords[0]], {
-            radius: 6, color, fillColor: color, fillOpacity: 0.75, weight: 1
-          }).bindPopup(`<strong>${ev.title}</strong><br>${cat?.title || ''}<br>${date}`)
-            .addTo(eonetLayer);
-        }
-        return `<div class="event-card">
-          <div class="event-type">${(cat?.title || 'Event').toUpperCase()}</div>
-          <div class="event-title">${ev.title}</div>
-          <div class="event-meta">${date}${coords ? ` · ${coords[1].toFixed(1)}°, ${coords[0].toFixed(1)}°` : ''}</div>
-        </div>`;
-      }).join('');
-
-      if (eonetLayer.getLayers().length) {
-        eonetMap.fitBounds(L.featureGroup(eonetLayer.getLayers()).getBounds().pad(0.3), { maxZoom: 4 });
-      }
-    } catch (err) {
-      console.error('EONET', err);
-      listEl.innerHTML = `<div class="error-msg">${err.message}</div>`;
-    }
-  }
-
-  // ---------- ISS TRACKER ----------
-  function initIssMap() {
-    if (issMap) return;
-    issMap = L.map('iss-map', { zoomControl: false, worldCopyJump: true }).setView([0, 0], 2);
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-      attribution: '© OSM · CARTO', maxZoom: 6
-    }).addTo(issMap);
-    L.control.zoom({ position: 'bottomright' }).addTo(issMap);
-
-    // Custom ISS icon
-    const issIcon = L.divIcon({
-      className: 'iss-marker',
-      html: `<div style="
-        width:18px;height:18px;border-radius:50%;
-        background:#00d4ff;border:2px solid #fff;
-        box-shadow:0 0 12px #00d4ff,0 0 4px #fff;
-      "></div>`,
-      iconSize: [18, 18],
-      iconAnchor: [9, 9]
+    el.querySelector('.x').onclick = () => el.remove();
+    // drag
+    const hdr = el.querySelector('.float-h');
+    let ox, oy, dragging = false;
+    hdr.onmousedown = e => {
+      if (e.target.classList.contains('x')) return;
+      dragging = true; ox = e.clientX - el.offsetLeft; oy = e.clientY - el.offsetTop;
+      el.style.zIndex = ++zTop;
+    };
+    window.addEventListener('mousemove', e => {
+      if (!dragging) return;
+      el.style.left = Math.max(0, e.clientX - ox) + 'px';
+      el.style.top = Math.max(0, e.clientY - oy) + 'px';
     });
-    issMarker = L.marker([0, 0], { icon: issIcon }).addTo(issMap);
-    issTrailLine = L.polyline([], { color: '#00d4ff', weight: 2, opacity: 0.6, dashArray: '4 6' }).addTo(issMap);
+    window.addEventListener('mouseup', () => { dragging = false; });
+    return el;
   }
 
+  // —— Maps ——
+  function initMaps() {
+    if (!issMap) {
+      issMap = L.map('iss-map', { zoomControl: false, worldCopyJump: true }).setView([0, 0], 2);
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 6, attribution: '' }).addTo(issMap);
+      issMarker = L.circleMarker([0, 0], { radius: 7, color: '#fff', fillColor: '#fc3d21', fillOpacity: 1, weight: 2 }).addTo(issMap);
+      issLine = L.polyline([], { color: '#fc3d21', weight: 2.5, opacity: 0.85 }).addTo(issMap);
+    }
+    if (!neoMap) {
+      neoMap = L.map('neo-map', { zoomControl: true, worldCopyJump: true }).setView([20, 0], 2);
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 7, attribution: '© CARTO' }).addTo(neoMap);
+      neoLayer = L.layerGroup().addTo(neoMap);
+    }
+  }
+
+  // —— ISS ——
   async function loadISS() {
     try {
-      initIssMap();
-      const data = await fetchJSON(CONFIG.endpoints.issNow);
-
-      const lat = data.latitude;
-      const lon = data.longitude;
-      const alt = data.altitude;
-      const vel = data.velocity; // km/h already from this API
-      const vis = data.visibility || '—';
-      const foot = data.footprint;
-
+      initMaps();
+      const d = await get(CONFIG.endpoints.iss);
+      const lat = d.latitude, lon = d.longitude;
       $('#iss-lat').textContent = lat.toFixed(2) + '°';
       $('#iss-lon').textContent = lon.toFixed(2) + '°';
-      $('#iss-alt').textContent = alt.toFixed(1);
-      $('#iss-vel').textContent = Math.round(vel).toLocaleString();
-      $('#iss-foot').textContent = Math.round(foot);
-      $('#iss-visibility').textContent = vis.toUpperCase();
+      $('#iss-alt').textContent = d.altitude.toFixed(1);
+      $('#iss-vel').textContent = Math.round(d.velocity).toLocaleString();
+      $('#iss-vis').textContent = (d.visibility || '—').toUpperCase();
 
-      // Trail (keep last ~40 points ≈ 5 min at 8s interval)
       issTrail.push([lat, lon]);
-      if (issTrail.length > 40) issTrail.shift();
-      issTrailLine.setLatLngs(issTrail);
+      if (issTrail.length > 50) issTrail.shift();
+      issLine.setLatLngs(issTrail);
       issMarker.setLatLng([lat, lon]);
-
-      // Soft pan if far from current view
-      const center = issMap.getCenter();
-      if (Math.abs(center.lat - lat) > 25 || Math.abs(center.lng - lon) > 40) {
-        issMap.panTo([lat, lon], { animate: true, duration: 1.2 });
-      }
-    } catch (err) {
-      console.error('ISS', err);
-    }
+      const c = issMap.getCenter();
+      if (Math.abs(c.lat - lat) > 30 || Math.abs(c.lng - lon) > 50)
+        issMap.panTo([lat, lon], { animate: true, duration: 1 });
+    } catch (e) { console.error('ISS', e); }
   }
 
-  // Crew count – best-effort (HTTP endpoint may fail on HTTPS pages)
-  async function loadCrew() {
+  // —— NEO ——
+  async function loadNEO() {
     try {
-      // Fallback constant if CORS/mixed content blocks
-      const res = await fetch('https://api.open-notify.org/astros.json').catch(() => null);
-      if (res && res.ok) {
-        const data = await res.json();
-        const issCrew = (data.people || []).filter(p => (p.craft || '').toUpperCase().includes('ISS'));
-        $('#iss-crew').textContent = issCrew.length || data.number || '—';
-      } else {
-        $('#iss-crew').textContent = '—';
-      }
-    } catch (_) {
-      $('#iss-crew').textContent = '—';
-    }
-  }
+      initMaps();
+      const start = today(), end = addDays(7);
+      const data = await get(`${CONFIG.endpoints.neoFeed}?start_date=${start}&end_date=${end}&api_key=${CONFIG.API_KEY}`);
+      const objs = data.near_earth_objects || {};
+      neoData = [];
+      let pha = 0, minLd = Infinity;
 
-  // ---------- MISSION DIGEST (Spaceflight News API) ----------
-  function renderMissions() {
-    const listEl = $('#mission-list');
-    let items = allMissionItems;
-    if (missionFilter === 'iss') {
-      items = items.filter(i => /iss|space station|crew|spacewalk/i.test(i.title + i.summary));
-    } else if (missionFilter === 'artemis') {
-      items = items.filter(i => /artemis|orion|sls|moon|lunar/i.test(i.title + i.summary));
-    } else if (missionFilter === 'other') {
-      items = items.filter(i => !/iss|space station|artemis|orion/i.test(i.title + i.summary));
-    }
-
-    if (!items.length) {
-      listEl.innerHTML = `<div class="loading-cell">No matching updates</div>`;
-      return;
-    }
-
-    listEl.innerHTML = items.slice(0, 12).map(item => {
-      const tag = /artemis|orion|sls|lunar/i.test(item.title) ? 'ARTEMIS'
-                : /iss|space station|crew|spacewalk/i.test(item.title) ? 'ISS'
-                : (item.news_site || 'NEWS').toUpperCase().slice(0, 12);
-      const time = item.published_at ? item.published_at.replace('T', ' ').slice(0, 16) : '';
-      return `<a class="event-card" href="${item.url}" target="_blank" rel="noopener" style="text-decoration:none;display:block">
-        <div class="event-type">${tag}</div>
-        <div class="event-title">${item.title}</div>
-        <div class="event-meta">${time} UTC · ${item.news_site || ''}</div>
-      </a>`;
-    }).join('');
-  }
-
-  async function loadMissions() {
-    try {
-      // Fetch recent + ISS + Artemis focused
-      const [all, iss, artemis] = await Promise.all([
-        fetchJSON(`${CONFIG.endpoints.spaceflightNews}?limit=15&ordering=-published_at`),
-        fetchJSON(`${CONFIG.endpoints.spaceflightNews}?limit=10&search=ISS&ordering=-published_at`),
-        fetchJSON(`${CONFIG.endpoints.spaceflightNews}?limit=10&search=Artemis&ordering=-published_at`)
-      ]);
-
-      const map = new Map();
-      [...(all.results || []), ...(iss.results || []), ...(artemis.results || [])].forEach(a => {
-        if (!map.has(a.id)) map.set(a.id, a);
+      Object.keys(objs).forEach(date => {
+        objs[date].forEach(n => {
+          const a = n.close_approach_data?.[0];
+          if (!a) return;
+          const ld = parseFloat(a.miss_distance?.kilometers || 0) / 384400;
+          const vel = parseFloat(a.relative_velocity?.kilometers_per_second || 0);
+          const dmin = n.estimated_diameter?.meters?.estimated_diameter_min || 0;
+          const dmax = n.estimated_diameter?.meters?.estimated_diameter_max || 0;
+          const haz = n.is_potentially_hazardous_asteroid;
+          if (haz) pha++;
+          if (ld < minLd) minLd = ld;
+          // Approximate ground point of closest approach using approach epoch (simplified: use random-ish lon from name hash + lat 0 band for viz)
+          // Better: place markers at approach "sub-point" approx using orbital nodes simplified to lat/lon from approach data if available
+          // NeoWs doesn't give ground track; we place markers distributed for visualization + click for data
+          const hash = (n.id || '').split('').reduce((s, c) => s + c.charCodeAt(0), 0);
+          const mlat = ((hash % 140) - 70) * 0.9;
+          const mlon = ((hash * 7) % 360) - 180;
+          neoData.push({
+            id: n.id, name: (n.name || '').replace(/[()]/g, ''),
+            date: a.close_approach_date, ld, vel,
+            size: Math.round((dmin + dmax) / 2), haz,
+            lat: mlat, lon: mlon, abs: n.absolute_magnitude_h
+          });
+        });
       });
-      allMissionItems = Array.from(map.values())
-        .sort((a, b) => (b.published_at || '').localeCompare(a.published_at || ''));
+      neoData.sort((a, b) => a.ld - b.ld);
+      $('#neo-tot').textContent = neoData.length;
+      $('#neo-pha').textContent = pha;
+      $('#neo-close').textContent = isFinite(minLd) ? minLd.toFixed(2) : '—';
+      $('#neo-n').textContent = neoData.length + ' OBJ';
 
-      // Detect new items for chime
-      const newIds = allMissionItems.map(i => i.id);
-      const hasNew = newIds.some(id => !lastNewsIds.has(id) && lastNewsIds.size > 0);
-      if (hasNew) {
-        playChime();
-        const status = $('#system-status');
-        status.classList.remove('online');
-        status.innerHTML = `<span class="status-dot" style="background:var(--amber)"></span> NEW UPDATE`;
-        setTimeout(() => {
-          status.classList.add('online');
-          status.innerHTML = `<span class="status-dot"></span> SYSTEMS NOMINAL`;
-        }, 8000);
-      }
-      lastNewsIds = new Set(newIds);
-
-      $('#mission-count').textContent = `${allMissionItems.length} updates`;
-      renderMissions();
-    } catch (err) {
-      console.error('Missions', err);
-      $('#mission-list').innerHTML = `<div class="error-msg">${err.message}</div>`;
-    }
+      neoLayer.clearLayers();
+      neoData.forEach(n => {
+        const col = n.haz ? '#fc3d21' : '#5eb3f6';
+        const m = L.circleMarker([n.lat, n.lon], {
+          radius: n.haz ? 7 : 5, color: col, fillColor: col, fillOpacity: 0.85, weight: 1
+        });
+        m.bindTooltip(n.name + (n.haz ? ' · PHA' : ''), { direction: 'top' });
+        m.on('click', () => openNeoDetail(n));
+        neoLayer.addLayer(m);
+      });
+    } catch (e) { console.error('NEO', e); }
   }
 
-  // ---------- JPL updates (reuse Spaceflight News filtered for JPL/Mars/Europa etc.) ----------
-  async function loadJPL() {
-    const listEl = $('#jpl-list');
+  function openNeoDetail(n) {
+    openFloat('neo-' + n.id, 'NEO · ' + n.name, `
+      <table class="float-table">
+        <tr><th>Name</th><td>${n.name}</td></tr>
+        <tr><th>Approach</th><td>${n.date}</td></tr>
+        <tr><th>Miss distance</th><td>${n.ld.toFixed(3)} LD (${(n.ld * 384400).toFixed(0)} km)</td></tr>
+        <tr><th>Velocity</th><td>${n.vel.toFixed(2)} km/s</td></tr>
+        <tr><th>Est. size</th><td>~${n.size} m</td></tr>
+        <tr><th>Abs. magnitude</th><td>${n.abs ?? '—'}</td></tr>
+        <tr><th>Potentially hazardous</th><td class="${n.haz ? 'pha' : ''}">${n.haz ? 'YES' : 'No'}</td></tr>
+      </table>
+      <p style="margin-top:10px;font-size:11px;color:var(--muted)">Marker position is illustrative for visualization. Approach geometry from NeoWs.</p>
+    `, 380, 320);
+  }
+
+  // —— APOD ——
+  let apodCache = null;
+  async function loadAPOD() {
     try {
-      const data = await fetchJSON(
-        `${CONFIG.endpoints.spaceflightNews}?limit=12&search=JPL&ordering=-published_at`
-      );
-      const items = data.results || [];
-      if (!items.length) {
-        // Fallback broader robotic search
-        const fb = await fetchJSON(
-          `${CONFIG.endpoints.spaceflightNews}?limit=10&search=Mars OR Europa OR Perseverance OR Voyager&ordering=-published_at`
-        );
-        items.push(...(fb.results || []));
-      }
-
-      if (!items.length) {
-        listEl.innerHTML = `<div class="loading-cell">No recent JPL items</div>`;
-        return;
-      }
-
-      listEl.innerHTML = items.slice(0, 8).map(item => {
-        const time = item.published_at ? item.published_at.replace('T', ' ').slice(0, 16) : '';
-        return `<a class="event-card" href="${item.url}" target="_blank" rel="noopener" style="text-decoration:none;display:block">
-          <div class="event-type">JPL</div>
-          <div class="event-title">${item.title}</div>
-          <div class="event-meta">${time} · ${item.news_site || ''}</div>
-        </a>`;
-      }).join('');
-    } catch (err) {
-      console.error('JPL', err);
-      listEl.innerHTML = `<div class="error-msg">${err.message}</div>`;
-    }
+      apodCache = await get(`${CONFIG.endpoints.apod}?api_key=${CONFIG.API_KEY}`);
+      $('#apod-d').textContent = apodCache.date || '—';
+      const url = apodCache.media_type === 'image' ? (apodCache.url || apodCache.hdurl) : null;
+      $('#apod-prev').innerHTML = url
+        ? `<img src="${url}" style="width:100%;height:100%;object-fit:cover" alt="">`
+        : `<div style="padding:8px;color:var(--muted)">${apodCache.title || 'Video'}</div>`;
+    } catch (e) { $('#apod-prev').innerHTML = `<div class="list-item">${e.message}</div>`; }
   }
 
-  // ---------- Media Library ----------
-  async function loadMedia(query = 'James Webb') {
-    const grid = $('#media-grid');
-    if (!query.trim()) return;
-    grid.innerHTML = `<div class="loading-cell">Searching…</div>`;
+  // —— EPIC ——
+  let epicCache = null;
+  async function loadEPIC() {
     try {
-      const data = await fetchJSON(
-        `${CONFIG.endpoints.imagesSearch}?q=${encodeURIComponent(query)}&media_type=image&page_size=12`
-      );
-      const items = data.collection?.items || [];
-      if (!items.length) {
-        grid.innerHTML = `<div class="loading-cell">No results for “${query}”</div>`;
-        return;
-      }
-      grid.innerHTML = items.map(item => {
-        const meta = item.data?.[0] || {};
-        const links = item.links || [];
-        const thumb = links.find(l => l.rel === 'preview')?.href || links[0]?.href || '';
-        const title = meta.title || 'Untitled';
-        const nasaId = meta.nasa_id || '';
-        return `<a class="media-card" href="https://images.nasa.gov/details/${nasaId}" target="_blank" rel="noopener" title="${title}">
-          <img src="${thumb}" alt="${title}" loading="lazy" onerror="this.style.opacity=0.3" />
-          <div class="media-title">${title}</div>
-        </a>`;
-      }).join('');
-    } catch (err) {
-      grid.innerHTML = `<div class="error-msg">${err.message}</div>`;
-    }
+      const imgs = await get(`${CONFIG.endpoints.epic}?api_key=${CONFIG.API_KEY}`);
+      if (!imgs?.length) return;
+      epicCache = imgs[0];
+      const [y, m, d] = epicCache.date.split(' ')[0].split('-');
+      const src = `${CONFIG.endpoints.epicImg}/${y}/${m}/${d}/png/${epicCache.image}.png?api_key=${CONFIG.API_KEY}`;
+      $('#epic-d').textContent = epicCache.date.split(' ')[0];
+      $('#epic-prev').innerHTML = `<img src="${src}" alt="EPIC">`;
+    } catch (e) { console.error(e); }
   }
 
-  // ---------- Orchestration ----------
-  async function refreshAll() {
-    const btn = $('#btn-refresh');
-    btn.classList.add('spinning');
-    btn.disabled = true;
+  // —— DONKI ——
+  let donkiCache = [];
+  async function loadDONKI() {
+    try {
+      const start = ago(7);
+      const notes = await get(`${CONFIG.endpoints.donkiN}?startDate=${start}&endDate=${today()}&api_key=${CONFIG.API_KEY}`);
+      donkiCache = (notes || []).slice(0, 12).map(n => ({
+        type: (n.messageType || 'NOTE').toUpperCase(),
+        title: n.messageID || n.messageType,
+        time: (n.messageIssueTime || '').replace('T', ' ').slice(0, 16),
+        body: (n.messageBody || '').slice(0, 200)
+      }));
+      $('#donki-n').textContent = donkiCache.length;
+      $('#donki-prev').innerHTML = donkiCache.slice(0, 5).map(e =>
+        `<div class="list-item"><div class="t">${e.type}</div><div class="n">${e.title}</div></div>`
+      ).join('') || '<div class="list-item">No recent events</div>';
+    } catch (e) { $('#donki-prev').innerHTML = `<div class="list-item">${e.message}</div>`; }
+  }
 
-    await Promise.allSettled([
-      loadAPOD(),
-      loadNEO(),
-      loadEPIC(),
-      loadDONKI(),
-      loadEONET(),
-      loadMissions(),
-      loadJPL(),
-      loadCrew()
-    ]);
+  // —— EONET ——
+  let eonetCache = [];
+  async function loadEONET() {
+    try {
+      const data = await get(`${CONFIG.endpoints.eonet}?status=open&limit=20`);
+      eonetCache = (data.events || []).map(ev => {
+        const g = ev.geometry?.[ev.geometry.length - 1];
+        return {
+          title: ev.title,
+          cat: ev.categories?.[0]?.title || 'Event',
+          date: g?.date?.slice(0, 10) || '',
+          coords: g?.coordinates
+        };
+      });
+      $('#eonet-n').textContent = eonetCache.length;
+      $('#eonet-prev').innerHTML = eonetCache.slice(0, 5).map(e =>
+        `<div class="list-item"><div class="t">${e.cat.toUpperCase()}</div><div class="n">${e.title}</div></div>`
+      ).join('') || '<div class="list-item">None open</div>';
+    } catch (e) { console.error(e); }
+  }
 
-    if (!$('#media-grid').querySelector('.media-card')) {
-      loadMedia($('#media-query').value || 'James Webb');
-    }
+  // —— Missions / JPL ——
+  async function loadNews() {
+    try {
+      const [all, iss, art, jpl] = await Promise.all([
+        get(`${CONFIG.endpoints.news}?limit=12&ordering=-published_at`),
+        get(`${CONFIG.endpoints.news}?limit=8&search=ISS&ordering=-published_at`),
+        get(`${CONFIG.endpoints.news}?limit=8&search=Artemis&ordering=-published_at`),
+        get(`${CONFIG.endpoints.news}?limit=8&search=JPL&ordering=-published_at`)
+      ]);
+      const map = new Map();
+      [...(all.results||[]), ...(iss.results||[]), ...(art.results||[])].forEach(a => map.set(a.id, a));
+      newsCache = [...map.values()].sort((a, b) => (b.published_at||'').localeCompare(a.published_at||''));
+      const jplItems = jpl.results || [];
 
-    setLastRefresh();
-    btn.classList.remove('spinning');
-    btn.disabled = false;
+      $('#mis-n').textContent = newsCache.length;
+      $('#mis-prev').innerHTML = newsCache.slice(0, 6).map(i =>
+        `<div class="list-item"><div class="t">${(i.news_site||'NEWS').slice(0,14)}</div><div class="n">${i.title}</div></div>`
+      ).join('');
+      $('#jpl-prev').innerHTML = jplItems.slice(0, 5).map(i =>
+        `<div class="list-item"><div class="t">JPL</div><div class="n">${i.title}</div></div>`
+      ).join('') || '<div class="list-item">—</div>';
+    } catch (e) { console.error(e); }
+  }
+
+  // —— Media preview ——
+  async function loadMediaPrev() {
+    try {
+      const d = await get(`${CONFIG.endpoints.images}?q=James%20Webb&media_type=image&page_size=4`);
+      const items = d.collection?.items || [];
+      $('#media-prev').innerHTML = items.length
+        ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;height:100%">
+            ${items.slice(0,4).map(it => {
+              const th = it.links?.find(l => l.rel==='preview')?.href || '';
+              return `<img src="${th}" style="width:100%;height:100%;object-fit:cover" onerror="this.style.opacity=0.2">`;
+            }).join('')}
+          </div>`
+        : '';
+    } catch (_) {}
+  }
+
+  // —— Panel open handlers ——
+  function bindTiles() {
+    $$('.tile.clickable, .tile-iss, .tile-neo').forEach(t => {
+      t.addEventListener('click', e => {
+        // don't steal map interaction
+        if (e.target.closest('.leaflet-container') || e.target.closest('.leaflet-control')) return;
+        const p = t.dataset.panel;
+        if (p === 'apod') openAPOD();
+        else if (p === 'epic') openEPIC();
+        else if (p === 'donki') openDONKI();
+        else if (p === 'eonet') openEONET();
+        else if (p === 'missions') openMissions();
+        else if (p === 'jpl') openJPL();
+        else if (p === 'cams') openCams();
+        else if (p === 'media') openMedia();
+        else if (p === 'neo') openNEOList();
+        else if (p === 'iss') openISSDetail();
+      });
+    });
+  }
+
+  function openAPOD() {
+    if (!apodCache) return;
+    const d = apodCache;
+    let media = d.media_type === 'video'
+      ? (d.url.includes('youtube') || d.url.includes('youtu.be')
+          ? `<iframe src="${d.url.replace('watch?v=','embed/').replace('youtu.be/','youtube.com/embed/')}" style="width:100%;aspect-ratio:16/9;border:0" allowfullscreen></iframe>`
+          : `<video controls src="${d.url}" style="width:100%"></video>`)
+      : `<img src="${d.hdurl || d.url}" alt="">`;
+    openFloat('apod', 'APOD · ' + (d.date || ''), `
+      ${media}
+      <h3 style="margin-top:10px">${d.title || ''}</h3>
+      <p>${d.explanation || ''}</p>
+      <p style="margin-top:8px;font-size:11px">${d.copyright ? '© ' + d.copyright : ''}</p>
+    `, 560, 520);
+  }
+
+  function openEPIC() {
+    if (!epicCache) return;
+    const [y, m, d] = epicCache.date.split(' ')[0].split('-');
+    const src = `${CONFIG.endpoints.epicImg}/${y}/${m}/${d}/png/${epicCache.image}.png?api_key=${CONFIG.API_KEY}`;
+    openFloat('epic', 'EPIC · DSCOVR L1', `
+      <img src="${src}" style="width:100%;border-radius:50%;max-width:360px;display:block;margin:0 auto" alt="Earth">
+      <p style="text-align:center;margin-top:10px">${epicCache.date}</p>
+    `, 420, 480);
+  }
+
+  function openDONKI() {
+    openFloat('donki', 'SPACE WEATHER · DONKI', donkiCache.map(e =>
+      `<div class="list-item" style="padding:8px 0"><div class="t">${e.type} · ${e.time}</div><div class="n" style="white-space:normal">${e.title}</div><div style="color:var(--muted);font-size:11px;margin-top:2px">${e.body}</div></div>`
+    ).join('') || 'No events', 480, 420);
+  }
+
+  function openEONET() {
+    openFloat('eonet', 'NATURAL EVENTS · EONET', eonetCache.map(e =>
+      `<div class="list-item" style="padding:6px 0"><div class="t">${e.cat.toUpperCase()} · ${e.date}</div><div class="n" style="white-space:normal">${e.title}</div></div>`
+    ).join('') || 'None', 440, 400);
+  }
+
+  function openMissions() {
+    openFloat('missions', 'MISSION DIGEST', newsCache.map(i =>
+      `<a href="${i.url}" target="_blank" rel="noopener" class="list-item" style="display:block;text-decoration:none;padding:8px 0">
+        <div class="t">${(i.news_site||'').toUpperCase()} · ${(i.published_at||'').slice(0,10)}</div>
+        <div class="n" style="white-space:normal;color:var(--text)">${i.title}</div>
+      </a>`
+    ).join(''), 500, 480);
+  }
+
+  function openJPL() {
+    openFloat('jpl', 'JPL / ROBOTIC MISSIONS', `
+      <div style="margin-bottom:12px">
+        <div style="font-size:10px;letter-spacing:0.1em;color:var(--muted);margin-bottom:4px">CLEAN ROOM / HIGH BAY</div>
+        <iframe src="https://www.youtube.com/embed/live_stream?channel=UCryGek9-xMZ4tqPL4r6_B1w&autoplay=0&mute=1" style="width:100%;aspect-ratio:16/9;border:0;background:#000" allowfullscreen></iframe>
+      </div>
+      <div id="jpl-float-list">Loading…</div>
+    `, 520, 500);
+    get(`${CONFIG.endpoints.news}?limit=10&search=JPL&ordering=-published_at`).then(d => {
+      const el = document.querySelector('#jpl-float-list');
+      if (el) el.innerHTML = (d.results || []).map(i =>
+        `<a href="${i.url}" target="_blank" rel="noopener" class="list-item" style="display:block;text-decoration:none;padding:6px 0">
+          <div class="t">${(i.published_at||'').slice(0,10)}</div>
+          <div class="n" style="white-space:normal;color:var(--text)">${i.title}</div>
+        </a>`
+      ).join('');
+    }).catch(() => {});
+  }
+
+  function openCams() {
+    openFloat('cams', 'LIVE CAMERA FEEDS', `
+      <div class="cam-grid">
+        <div><div style="font-size:9px;letter-spacing:0.1em;color:var(--muted);margin-bottom:4px">ISS HD EARTH</div>
+          <iframe src="https://www.youtube.com/embed/awQzjn72bI0?autoplay=0&mute=1" allowfullscreen></iframe></div>
+        <div><div style="font-size:9px;letter-spacing:0.1em;color:var(--muted);margin-bottom:4px">ISS LIVE</div>
+          <iframe src="https://www.youtube.com/embed/M3HKLzjvKPc?autoplay=0&mute=1" allowfullscreen></iframe></div>
+      </div>
+      <p style="margin-top:8px;font-size:11px;color:var(--muted)">Feeds may show recorded Earth views during eclipse or operations.</p>
+    `, 640, 420);
+  }
+
+  function openMedia() {
+    openFloat('media', 'NASA IMAGE & VIDEO LIBRARY', `
+      <div class="search-row">
+        <input id="mq" value="James Webb" placeholder="Search…">
+        <button id="ms">SEARCH</button>
+      </div>
+      <div class="media-g" id="mg">…</div>
+    `, 560, 480);
+    const run = async () => {
+      const q = document.getElementById('mq')?.value || 'NASA';
+      const d = await get(`${CONFIG.endpoints.images}?q=${encodeURIComponent(q)}&media_type=image&page_size=16`);
+      const g = document.getElementById('mg');
+      if (!g) return;
+      g.innerHTML = (d.collection?.items || []).map(it => {
+        const m = it.data?.[0] || {};
+        const th = it.links?.find(l => l.rel === 'preview')?.href || '';
+        return `<a href="https://images.nasa.gov/details/${m.nasa_id||''}" target="_blank" rel="noopener">
+          <img src="${th}" alt="" onerror="this.style.opacity=0.2"><span>${m.title||''}</span></a>`;
+      }).join('');
+    };
+    setTimeout(() => {
+      document.getElementById('ms')?.addEventListener('click', run);
+      document.getElementById('mq')?.addEventListener('keydown', e => e.key === 'Enter' && run());
+      run();
+    }, 50);
+  }
+
+  function openNEOList() {
+    openFloat('neolist', 'NEAR-EARTH OBJECTS · 7-DAY', `
+      <table class="float-table">
+        <thead><tr><th>NAME</th><th>DATE</th><th>LD</th><th>km/s</th><th>m</th><th>PHA</th></tr></thead>
+        <tbody>
+          ${neoData.slice(0, 25).map(n => `
+            <tr style="cursor:pointer" data-id="${n.id}">
+              <td>${n.name.length > 16 ? n.name.slice(0,14)+'…' : n.name}</td>
+              <td>${n.date}</td><td>${n.ld.toFixed(2)}</td><td>${n.vel.toFixed(1)}</td>
+              <td>${n.size}</td><td class="${n.haz?'pha':''}">${n.haz?'YES':'—'}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+      <p style="margin-top:8px;font-size:11px;color:var(--muted)">Click row or map marker for detail. Map markers are distributed for visualization.</p>
+    `, 560, 480);
+    setTimeout(() => {
+      document.querySelectorAll('#f-neolist tr[data-id]').forEach(tr => {
+        tr.onclick = () => {
+          const n = neoData.find(x => x.id === tr.dataset.id);
+          if (n) openNeoDetail(n);
+        };
+      });
+    }, 30);
+  }
+
+  function openISSDetail() {
+    openFloat('issd', 'ISS TELEMETRY', `
+      <table class="float-table">
+        <tr><th>Latitude</th><td id="fd-lat">—</td></tr>
+        <tr><th>Longitude</th><td id="fd-lon">—</td></tr>
+        <tr><th>Altitude</th><td id="fd-alt">—</td></tr>
+        <tr><th>Velocity</th><td id="fd-vel">—</td></tr>
+        <tr><th>Visibility</th><td id="fd-vis">—</td></tr>
+        <tr><th>Footprint</th><td id="fd-foot">—</td></tr>
+      </table>
+      <p style="margin-top:10px;font-size:11px;color:var(--muted)">Live from WhereTheISS.at · Trail on main map (red). Position updates ~7 s.</p>
+    `, 360, 300);
+    const sync = async () => {
+      try {
+        const d = await get(CONFIG.endpoints.iss);
+        const set = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+        set('fd-lat', d.latitude.toFixed(4) + '°');
+        set('fd-lon', d.longitude.toFixed(4) + '°');
+        set('fd-alt', d.altitude.toFixed(2) + ' km');
+        set('fd-vel', Math.round(d.velocity).toLocaleString() + ' km/h');
+        set('fd-vis', (d.visibility || '—').toUpperCase());
+        set('fd-foot', Math.round(d.footprint) + ' km');
+      } catch (_) {}
+    };
+    sync();
+  }
+
+  // —— Orchestrate ——
+  async function refresh() {
+    $('#btn-refresh').style.opacity = '0.5';
+    await Promise.allSettled([loadAPOD(), loadNEO(), loadEPIC(), loadDONKI(), loadEONET(), loadNews(), loadMediaPrev()]);
+    $('#last-upd').textContent = 'UPD ' + utc();
+    $('#btn-refresh').style.opacity = '1';
   }
 
   function init() {
-    updateClocks();
-    setInterval(updateClocks, 1000);
-
-    // ISS fast loop
+    $('#utc').textContent = utc();
+    $('#loc').textContent = loc();
+    initMaps();
+    bindTiles();
     loadISS();
-    setInterval(loadISS, CONFIG.issRefreshMs);
+    setInterval(loadISS, CONFIG.issMs);
+    refresh();
+    setInterval(refresh, CONFIG.refreshMs);
 
-    // Tabs
-    $$('.tab').forEach(tab => {
-      tab.addEventListener('click', () => {
-        $$('.tab').forEach(t => t.classList.remove('active'));
-        tab.classList.add('active');
-        missionFilter = tab.dataset.filter;
-        renderMissions();
-      });
-    });
-
-    // Alert toggle
-    $('#alert-status').addEventListener('click', () => {
-      CONFIG.audioEnabled = !CONFIG.audioEnabled;
-      $('#alert-status').textContent = CONFIG.audioEnabled ? '🔔 ALERTS ON' : '🔇 ALERTS OFF';
-      if (CONFIG.audioEnabled) playChime();
-    });
-
-    $('#btn-refresh').addEventListener('click', refreshAll);
-    $('#btn-media-search').addEventListener('click', () => loadMedia($('#media-query').value));
-    $('#media-query').addEventListener('keydown', e => {
-      if (e.key === 'Enter') loadMedia($('#media-query').value);
-    });
-
-    // First full load + auto
-    refreshAll();
-    setInterval(refreshAll, CONFIG.autoRefreshMs);
-
-    // Unlock audio on first user gesture
-    document.body.addEventListener('click', function unlock() {
-      if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
-      document.body.removeEventListener('click', unlock);
+    $('#btn-refresh').onclick = refresh;
+    $('#btn-audio').onclick = () => {
+      CONFIG.audio = !CONFIG.audio;
+      $('#btn-audio').textContent = CONFIG.audio ? '🔔' : '🔇';
+      if (CONFIG.audio) chime();
+    };
+    document.body.addEventListener('click', function u() {
+      if (audioCtx?.state === 'suspended') audioCtx.resume();
+      document.body.removeEventListener('click', u);
     }, { once: true });
   }
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-  } else {
-    init();
-  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
 })();
