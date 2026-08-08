@@ -8,104 +8,99 @@
   <link rel="stylesheet" href="css/styles.css" />
 </head>
 <body>
-  <!-- TOP BAR -->
   <header class="topbar">
     <div class="brand">
-      <svg class="meatball" viewBox="0 0 100 100" width="36" height="36" aria-label="NASA">
-        <circle cx="50" cy="50" r="48" fill="none" stroke="#fc3d21" stroke-width="3.5"/>
-        <circle cx="50" cy="50" r="44" fill="#0b3d91"/>
-        <ellipse cx="50" cy="50" rx="36" ry="16" fill="none" stroke="#fff" stroke-width="2" transform="rotate(-28 50 50)"/>
-        <path d="M20 56 Q50 30 80 44 L76 50 Q50 40 24 60 Z" fill="#fc3d21"/>
-        <text x="50" y="55" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="15" font-weight="700" fill="#fff" letter-spacing="0.5">NASA</text>
-      </svg>
-      <div>
+      <div class="nasa-wordmark">NASA</div>
+      <div class="brand-meta">
         <div class="brand-title">MISSION CONTROL</div>
         <div class="brand-sub">OPEN DATA OPERATIONS</div>
       </div>
     </div>
     <div class="top-status">
-      <span class="pill online" id="sys-status"><i></i> NOMINAL</span>
+      <span class="pill online" id="sys-status"><i></i> SYSTEMS NOMINAL</span>
       <span class="pill" id="last-upd">—</span>
     </div>
     <div class="top-clocks">
-      <div><span class="clk-l">UTC</span><span class="clk" id="utc">00:00:00</span></div>
-      <div><span class="clk-l">LOCAL</span><span class="clk" id="loc">00:00:00</span></div>
+      <div class="clk-block"><span class="clk-l">UTC</span><span class="clk" id="utc">00:00:00</span></div>
+      <div class="clk-block"><span class="clk-l">LOCAL</span><span class="clk" id="loc">00:00:00</span></div>
       <button class="btn" id="btn-refresh" title="Refresh">↻</button>
-      <button class="btn" id="btn-audio" title="Toggle alerts">🔔</button>
+      <button class="btn" id="btn-audio" title="Audio alerts">🔔</button>
     </div>
   </header>
 
-  <!-- MAIN — compact single-monitor grid -->
   <main class="console">
-    <!-- LEFT COLUMN: primary maps -->
     <section class="col maps">
-      <div class="tile tile-iss" data-panel="iss">
-        <div class="tile-h"><span>ISS TRACK</span><span class="tag" id="iss-vis">—</span></div>
+      <div class="panel tile-iss" data-panel="iss">
+        <div class="panel-h">
+          <span class="feed">FEED</span>
+          <span class="panel-title">ISS ORBITAL TRACK</span>
+          <span class="tag" id="iss-vis">—</span>
+        </div>
         <div id="iss-map" class="map"></div>
-        <div class="tile-stats" id="iss-stats">
-          <span>LAT <b id="iss-lat">—</b></span>
-          <span>LON <b id="iss-lon">—</b></span>
-          <span>ALT <b id="iss-alt">—</b> km</span>
-          <span>VEL <b id="iss-vel">—</b> km/h</span>
+        <div class="telemetry-strip">
+          <div class="tel"><span class="tel-l">LAT</span><span class="tel-v" id="iss-lat">—</span></div>
+          <div class="tel"><span class="tel-l">LON</span><span class="tel-v" id="iss-lon">—</span></div>
+          <div class="tel"><span class="tel-l">ALT</span><span class="tel-v" id="iss-alt">—</span><span class="tel-u">km</span></div>
+          <div class="tel"><span class="tel-l">VEL</span><span class="tel-v" id="iss-vel">—</span><span class="tel-u">km/h</span></div>
         </div>
       </div>
-      <div class="tile tile-neo" data-panel="neo">
-        <div class="tile-h"><span>NEAR-EARTH OBJECTS</span><span class="tag" id="neo-n">—</span></div>
-        <div id="neo-map" class="map"></div>
-        <div class="tile-stats">
-          <span>WEEK <b id="neo-tot">—</b></span>
-          <span>PHA <b id="neo-pha" class="warn">—</b></span>
-          <span>CLOSEST <b id="neo-close">—</b> LD</span>
+      <div class="panel tile-neo" data-panel="neo">
+        <div class="panel-h">
+          <span class="feed">FEED</span>
+          <span class="panel-title">NEAR-EARTH OBJECTS</span>
+          <span class="tag" id="neo-n">—</span>
+        </div>
+        <div id="neo-globe" class="globe-wrap">
+          <canvas id="neo-canvas"></canvas>
+          <div class="globe-label">EARTH · SPACE VIEW</div>
+        </div>
+        <div class="telemetry-strip">
+          <div class="tel"><span class="tel-l">WEEK</span><span class="tel-v" id="neo-tot">—</span></div>
+          <div class="tel"><span class="tel-l">PHA</span><span class="tel-v warn" id="neo-pha">—</span></div>
+          <div class="tel"><span class="tel-l">CLOSEST</span><span class="tel-v" id="neo-close">—</span><span class="tel-u">LD</span></div>
         </div>
       </div>
     </section>
 
-    <!-- CENTER: data tiles -->
     <section class="col data">
-      <div class="tile clickable" data-panel="apod">
-        <div class="tile-h"><span>01 APOD</span><span class="tag" id="apod-d">—</span></div>
-        <div class="tile-body" id="apod-prev"><div class="skel"></div></div>
+      <div class="panel clickable" data-panel="apod">
+        <div class="panel-h"><span class="feed">FEED</span><span class="panel-title">APOD</span><span class="tag" id="apod-d">—</span></div>
+        <div class="panel-b" id="apod-prev"><div class="skel"></div></div>
       </div>
-      <div class="tile clickable" data-panel="epic">
-        <div class="tile-h"><span>02 EPIC EARTH</span><span class="tag" id="epic-d">—</span></div>
-        <div class="tile-body epic-prev" id="epic-prev"><div class="skel"></div></div>
+      <div class="panel clickable" data-panel="epic">
+        <div class="panel-h"><span class="feed">FEED</span><span class="panel-title">EPIC · L1</span><span class="tag" id="epic-d">—</span></div>
+        <div class="panel-b epic-prev" id="epic-prev"><div class="skel"></div></div>
       </div>
-      <div class="tile clickable" data-panel="donki">
-        <div class="tile-h"><span>03 SPACE WEATHER</span><span class="tag" id="donki-n">—</span></div>
-        <div class="tile-body list" id="donki-prev"></div>
+      <div class="panel clickable" data-panel="donki">
+        <div class="panel-h"><span class="feed">FEED</span><span class="panel-title">SPACE WEATHER</span><span class="tag" id="donki-n">—</span></div>
+        <div class="panel-b list" id="donki-prev"></div>
       </div>
-      <div class="tile clickable" data-panel="eonet">
-        <div class="tile-h"><span>04 NATURAL EVENTS</span><span class="tag" id="eonet-n">—</span></div>
-        <div class="tile-body list" id="eonet-prev"></div>
+      <div class="panel clickable" data-panel="eonet">
+        <div class="panel-h"><span class="feed">FEED</span><span class="panel-title">NATURAL EVENTS</span><span class="tag" id="eonet-n">—</span></div>
+        <div class="panel-b list" id="eonet-prev"></div>
       </div>
     </section>
 
-    <!-- RIGHT: feeds & news -->
     <section class="col feeds">
-      <div class="tile clickable" data-panel="missions">
-        <div class="tile-h"><span>05 MISSION DIGEST</span><span class="tag" id="mis-n">—</span></div>
-        <div class="tile-body list" id="mis-prev"></div>
+      <div class="panel clickable" data-panel="missions">
+        <div class="panel-h"><span class="feed">FEED</span><span class="panel-title">MISSION DIGEST</span><span class="tag" id="mis-n">—</span></div>
+        <div class="panel-b list" id="mis-prev"></div>
       </div>
-      <div class="tile clickable" data-panel="jpl">
-        <div class="tile-h"><span>06 JPL / ROBOTIC</span></div>
-        <div class="tile-body list" id="jpl-prev"></div>
+      <div class="panel clickable" data-panel="jpl">
+        <div class="panel-h"><span class="feed">FEED</span><span class="panel-title">JPL · ROBOTIC</span></div>
+        <div class="panel-b list" id="jpl-prev"></div>
       </div>
-      <div class="tile clickable" data-panel="cams">
-        <div class="tile-h"><span>07 LIVE CAMERAS</span></div>
-        <div class="tile-body cams-mini">
+      <div class="panel clickable" data-panel="cams">
+        <div class="panel-h"><span class="feed">FEED</span><span class="panel-title">LIVE CAMERAS</span></div>
+        <div class="panel-b cams-mini">
           <div class="cam-thumb">ISS HD</div>
           <div class="cam-thumb">ISS ALT</div>
           <div class="cam-thumb">JPL BAY</div>
         </div>
       </div>
-      <div class="tile clickable" data-panel="media">
-        <div class="tile-h"><span>08 MEDIA LIBRARY</span></div>
-        <div class="tile-body" id="media-prev"><div class="skel"></div></div>
-      </div>
     </section>
   </main>
 
-  <!-- FLOATING WINDOW LAYER -->
   <div id="float-layer"></div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
