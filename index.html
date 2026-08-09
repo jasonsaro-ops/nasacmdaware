@@ -30,7 +30,7 @@
   </header>
 
   <main class="console">
-    <!-- LEFT: orbital trackers -->
+    <!-- LEFT: major orbital assets + NEO -->
     <section class="col maps">
       <div class="panel tile-sat">
         <div class="panel-h">
@@ -46,6 +46,49 @@
         <div class="sat-bar" id="sat-bar"></div>
       </div>
 
+      <div class="panel tile-neo">
+        <div class="panel-h">
+          <span class="feed">FEED</span>
+          <span class="panel-title">NEAR-EARTH OBJECTS</span>
+          <span class="tag" id="neo-n">—</span>
+        </div>
+        <div class="neo-split">
+          <div class="globe-wrap">
+            <canvas id="neo-canvas"></canvas>
+            <div class="globe-label">EARTH · SPACE VIEW</div>
+          </div>
+          <div class="neo-list" id="neo-list"></div>
+        </div>
+        <div class="telemetry-strip">
+          <div class="tel"><span class="tel-l">WEEK</span><span class="tel-v" id="neo-tot">—</span></div>
+          <div class="tel"><span class="tel-l">PHA</span><span class="tel-v warn" id="neo-pha">—</span></div>
+          <div class="tel"><span class="tel-l">CLOSEST</span><span class="tel-v" id="neo-close">—</span><span class="tel-u">LD</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- CENTER: data feeds -->
+    <section class="col data">
+      <div class="panel">
+        <div class="panel-h"><span class="feed">FEED</span><span class="panel-title">EPIC · L1 EARTH</span><span class="tag" id="epic-d">—</span></div>
+        <div class="panel-b epic-body" id="epic-prev"><div class="skel"></div></div>
+      </div>
+      <div class="panel">
+        <div class="panel-h"><span class="feed">FEED</span><span class="panel-title">SPACE WEATHER</span><span class="tag" id="donki-n">—</span></div>
+        <div class="panel-b list" id="donki-prev"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-h"><span class="feed">FEED</span><span class="panel-title">NATURAL EVENTS</span><span class="tag" id="eonet-n">—</span></div>
+        <div class="panel-b list" id="eonet-prev"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-h"><span class="feed">FEED</span><span class="panel-title">ISS MISSION STATUS</span><span class="tag" id="mis-n">—</span></div>
+        <div class="panel-b list" id="mis-prev"></div>
+      </div>
+    </section>
+
+    <!-- RIGHT: Starlink (top) + JPL + cameras -->
+    <section class="col feeds">
       <div class="panel tile-starlink">
         <div class="panel-h">
           <span class="feed">FEED</span>
@@ -66,49 +109,6 @@
             </div>
           </div>
         </div>
-      </div>
-    </section>
-
-    <!-- CENTER -->
-    <section class="col data">
-      <div class="panel tile-neo">
-        <div class="panel-h">
-          <span class="feed">FEED</span>
-          <span class="panel-title">NEAR-EARTH OBJECTS</span>
-          <span class="tag" id="neo-n">—</span>
-        </div>
-        <div class="neo-split">
-          <div class="globe-wrap">
-            <canvas id="neo-canvas"></canvas>
-            <div class="globe-label">EARTH · SPACE VIEW</div>
-          </div>
-          <div class="neo-list" id="neo-list"></div>
-        </div>
-        <div class="telemetry-strip">
-          <div class="tel"><span class="tel-l">WEEK</span><span class="tel-v" id="neo-tot">—</span></div>
-          <div class="tel"><span class="tel-l">PHA</span><span class="tel-v warn" id="neo-pha">—</span></div>
-          <div class="tel"><span class="tel-l">CLOSEST</span><span class="tel-v" id="neo-close">—</span><span class="tel-u">LD</span></div>
-        </div>
-      </div>
-      <div class="panel">
-        <div class="panel-h"><span class="feed">FEED</span><span class="panel-title">EPIC · L1 EARTH</span><span class="tag" id="epic-d">—</span></div>
-        <div class="panel-b epic-body" id="epic-prev"><div class="skel"></div></div>
-      </div>
-      <div class="panel">
-        <div class="panel-h"><span class="feed">FEED</span><span class="panel-title">SPACE WEATHER</span><span class="tag" id="donki-n">—</span></div>
-        <div class="panel-b list" id="donki-prev"></div>
-      </div>
-    </section>
-
-    <!-- RIGHT -->
-    <section class="col feeds">
-      <div class="panel">
-        <div class="panel-h"><span class="feed">FEED</span><span class="panel-title">NATURAL EVENTS</span><span class="tag" id="eonet-n">—</span></div>
-        <div class="panel-b list" id="eonet-prev"></div>
-      </div>
-      <div class="panel">
-        <div class="panel-h"><span class="feed">FEED</span><span class="panel-title">ISS MISSION STATUS</span><span class="tag" id="mis-n">—</span></div>
-        <div class="panel-b list" id="mis-prev"></div>
       </div>
       <div class="panel">
         <div class="panel-h"><span class="feed">FEED</span><span class="panel-title">JPL · ROBOTIC</span></div>

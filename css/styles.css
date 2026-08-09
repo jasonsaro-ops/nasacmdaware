@@ -156,7 +156,7 @@ body {
 .console {
   height: calc(100vh - 42px);
   display: grid;
-  grid-template-columns: 1.45fr 1fr 0.9fr;
+  grid-template-columns: 1.35fr 0.95fr 1.15fr;
   gap: 4px;
   padding: 4px;
 }
@@ -232,7 +232,7 @@ body {
 
 /* GLOBE STAGES */
 .tile-sat { flex: 1; min-height: 0; }
-.tile-starlink { flex: 1; min-height: 0; }
+.tile-starlink { flex: 1.6; min-height: 0; }
 .globe-stage {
   flex: 1;
   position: relative;
@@ -320,7 +320,7 @@ body {
 .sl-body {
   flex: 1;
   display: grid;
-  grid-template-columns: 1fr 160px;
+  grid-template-columns: 1fr 150px;
   min-height: 0;
 }
 .sl-globe { min-height: 120px; }
@@ -655,4 +655,46 @@ body {
   .console { grid-template-columns: 1fr; height: auto; overflow: auto; }
   body { overflow: auto; }
   .neo-split, .sl-body { grid-template-columns: 1fr; }
+}
+
+/* Disabled toggles — all sections */
+.sat-toggles label:has(input:disabled),
+.sat-toggles label.disabled,
+.sl-train.disabled,
+.list-item.disabled,
+.neo-list .ni.disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+  filter: grayscale(0.6);
+  pointer-events: none;
+}
+.sat-toggles input:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+  accent-color: var(--muted);
+}
+.sat-toggles label:has(input:disabled) .dot {
+  opacity: 0.35;
+  box-shadow: none;
+}
+.sat-toggles label:has(input:disabled) {
+  color: var(--muted);
+}
+.sl-train.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+.list-item.disabled,
+.neo-list .ni.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+.btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  border-color: var(--border);
+  color: var(--muted);
+  box-shadow: none;
 }

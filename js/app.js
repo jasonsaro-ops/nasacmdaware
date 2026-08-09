@@ -109,46 +109,90 @@
   function makeSatrec(item) {
     try {
       if (!item) return null;
-      if (item.EPOCH && (item.MEAN_MOTION || item.mean_motion)) {
-        return satellite.json2satrec(item);
+
+      // Classic two-line element (ivanstanojevic, Celestrak TLE text parsed, etc.)
+      const l1 = item.line1 || item.TLE_LINE1 || item.tle1 || item.tle_line1;
+      const l2 = item.line2 || item.TLE_LINE2 || item.tle2 || item.tle_line2;
+      if (l1 && l2 && String(l1).startsWith('1') && String(l2).startsWith('2')) {
+        const rec = satellite.twoline2satrec(String(l1).trim(), String(l2).trim());
+        if (rec && !rec.error) return rec;
       }
-      const l1 = item.TLE_LINE1 || item.tle1 || item.line1;
-      const l2 = item.TLE_LINE2 || item.tle2 || item.line2;
-      if (l1 && l2) return satellite.twoline2satrec(l1, l2);
-      // ivanstanojevic format
-      if (item.line1 && item.line2) return satellite.twoline2satrec(item.line1, item.line2);
+
+      // Celestrak / Space-Track OMM JSON (CCSDS Orbit Mean-Elements Message)
+      // satellite.js json2satrec expects uppercase OMM field names
+      if (item.EPOCH || item.epoch) {
+        const omm = {
+          OBJECT_NAME: item.OBJECT_NAME || item.object_name || item.name || 'SAT',
+          OBJECT_ID: item.OBJECT_ID || item.object_id || '',
+          EPOCH: item.EPOCH || item.epoch,
+          MEAN_MOTION: item.MEAN_MOTION || item.mean_motion,
+          ECCENTRICITY: item.ECCENTRICITY || item.eccentricity,
+          INCLINATION: item.INCLINATION || item.inclination,
+          RA_OF_ASC_NODE: item.RA_OF_ASC_NODE || item.ra_of_asc_node,
+          ARG_OF_PERICENTER: item.ARG_OF_PERICENTER || item.arg_of_pericenter,
+          MEAN_ANOMALY: item.MEAN_ANOMALY || item.mean_anomaly,
+          EPHEMERIS_TYPE: item.EPHEMERIS_TYPE || 0,
+          CLASSIFICATION_TYPE: item.CLASSIFICATION_TYPE || 'U',
+          NORAD_CAT_ID: item.NORAD_CAT_ID || item.norad_cat_id || item.satelliteId,
+          ELEMENT_SET_NO: item.ELEMENT_SET_NO || item.element_set_no || 999,
+          REV_AT_EPOCH: item.REV_AT_EPOCH || item.rev_at_epoch || 0,
+          BSTAR: item.BSTAR || item.bstar || 0,
+          MEAN_MOTION_DOT: item.MEAN_MOTION_DOT || item.mean_motion_dot || 0,
+          MEAN_MOTION_DDOT: item.MEAN_MOTION_DDOT || item.mean_motion_ddot || 0
+        };
+        if (omm.EPOCH && omm.MEAN_MOTION != null) {
+          const rec = satellite.json2satrec(omm);
+          if (rec && !rec.error) return rec;
+        }
+      }
     } catch (e) { console.warn('makeSatrec', e); }
     return null;
   }
 
   async function fetchTLE(noradId) {
     const id = String(noradId);
-    const sources = [
-      `https://celestrak.org/NORAD/elements/gp.php?CATNR=${id}&FORMAT=JSON`,
-      `https://tle.ivanstanojevic.me/api/tle/${id}`
-    ];
-    for (const url of sources) {
-      try {
-        const data = await get(url);
-        // Celestrak returns array of OMM objects
-        if (Array.isArray(data) && data.length) {
-          const rec = makeSatrec(data[0]);
-          if (rec && !rec.error) return rec;
-        }
-        // Single OMM object
-        if (data && data.NORAD_CAT_ID) {
-          const rec = makeSatrec(data);
-          if (rec && !rec.error) return rec;
-        }
-        // ivanstanojevic: { line1, line2, name, satelliteId }
-        if (data && (data.line1 || data.TLE_LINE1)) {
-          const rec = makeSatrec(data);
-          if (rec && !rec.error) return rec;
-        }
-      } catch (e) {
-        console.warn('TLE source failed', url, e.message);
+
+    // 1) ivanstanojevic — reliable CORS, classic 2-line TLE JSON
+    //    { satelliteId, name, date, line1, line2 }
+    try {
+      const data = await get(`https://tle.ivanstanojevic.me/api/tle/${id}`);
+      if (data) {
+        const rec = makeSatrec(data);
+        if (rec && !rec.error) return rec;
       }
-    }
+    } catch (e) { console.warn('TLE ivan', e.message); }
+
+    // 2) Celestrak OMM JSON (GP) — array or single object
+    //    Fields: OBJECT_NAME, NORAD_CAT_ID, EPOCH, MEAN_MOTION, ECCENTRICITY,
+    //    INCLINATION, RA_OF_ASC_NODE, ARG_OF_PERICENTER, MEAN_ANOMALY, ...
+    try {
+      const data = await get(`https://celestrak.org/NORAD/elements/gp.php?CATNR=${id}&FORMAT=JSON`);
+      const item = Array.isArray(data) ? data[0] : data;
+      if (item) {
+        const rec = makeSatrec(item);
+        if (rec && !rec.error) return rec;
+      }
+    } catch (e) { console.warn('TLE celestrak JSON', e.message); }
+
+    // 3) Celestrak classic 3LE text
+    //    Line0: name  Line1: 1 NORAD...  Line2: 2 NORAD...
+    try {
+      const r = await fetch(`https://celestrak.org/NORAD/elements/gp.php?CATNR=${id}&FORMAT=TLE`);
+      if (r.ok) {
+        const txt = await r.text();
+        const lines = txt.trim().split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+        let l1 = null, l2 = null;
+        for (const ln of lines) {
+          if (ln.startsWith('1 ')) l1 = ln;
+          if (ln.startsWith('2 ')) l2 = ln;
+        }
+        if (l1 && l2) {
+          const rec = satellite.twoline2satrec(l1, l2);
+          if (rec && !rec.error) return rec;
+        }
+      }
+    } catch (e) { console.warn('TLE celestrak TLE', e.message); }
+
     return null;
   }
 
@@ -252,8 +296,8 @@
       const rec = satRecords[s.id];
       const hasData = rec && (rec.satrec || s.id === 25544);
       const checked = rec && rec.enabled !== false && hasData;
-      return `<label data-id="${s.id}">
-        <input type="checkbox" ${checked ? 'checked' : ''} ${hasData ? '' : 'disabled'} title="${hasData ? s.name : 'TLE unavailable'}">
+      return `<label data-id="${s.id}" class="${hasData ? '' : 'disabled'}" title="${hasData ? s.name : 'TLE unavailable — source blocked or missing'}">
+        <input type="checkbox" ${checked ? 'checked' : ''} ${hasData ? '' : 'disabled'}>
         <i class="dot" style="background:${s.color}"></i>${s.name}
       </label>`;
     }).join('');
