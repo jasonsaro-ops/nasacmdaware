@@ -7,6 +7,8 @@
   <link rel="stylesheet" href="css/styles.css" />
 </head>
 <body>
+  <div class="scan-corners" aria-hidden="true"></div>
+
   <header class="topbar">
     <div class="brand">
       <div class="nasa-wordmark">NASA</div>
@@ -28,21 +30,47 @@
   </header>
 
   <main class="console">
-    <!-- 3D GLOBE TRACKER -->
+    <!-- LEFT: orbital trackers -->
     <section class="col maps">
       <div class="panel tile-sat">
         <div class="panel-h">
           <span class="feed">FEED</span>
-          <span class="panel-title">ORBITAL TRACK · 3D GLOBE</span>
+          <span class="panel-title">ORBITAL TRACK · MAJOR ASSETS</span>
           <span class="tag" id="sat-count">—</span>
         </div>
         <div class="globe-stage">
           <div id="globe-container"></div>
           <div class="sat-toggles" id="sat-toggles"></div>
+          <div class="panel-brackets"></div>
         </div>
         <div class="sat-bar" id="sat-bar"></div>
       </div>
 
+      <div class="panel tile-starlink">
+        <div class="panel-h">
+          <span class="feed">FEED</span>
+          <span class="panel-title">STARLINK CONSTELLATION</span>
+          <span class="tag" id="sl-count">—</span>
+        </div>
+        <div class="sl-body">
+          <div class="globe-stage sl-globe">
+            <div id="sl-globe-container"></div>
+            <div class="panel-brackets"></div>
+          </div>
+          <div class="sl-side">
+            <div class="sl-side-h">TRAINS / SHELLS</div>
+            <div class="sl-trains" id="sl-trains"></div>
+            <div class="sl-telem" id="sl-telem">
+              <div class="sl-telem-h">SELECT A TRAIN</div>
+              <div class="sl-telem-b">Isolate a constellation train to view live positions and telemetry.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- CENTER -->
+    <section class="col data">
       <div class="panel tile-neo">
         <div class="panel-h">
           <span class="feed">FEED</span>
@@ -62,9 +90,6 @@
           <div class="tel"><span class="tel-l">CLOSEST</span><span class="tel-v" id="neo-close">—</span><span class="tel-u">LD</span></div>
         </div>
       </div>
-    </section>
-
-    <section class="col data">
       <div class="panel">
         <div class="panel-h"><span class="feed">FEED</span><span class="panel-title">EPIC · L1 EARTH</span><span class="tag" id="epic-d">—</span></div>
         <div class="panel-b epic-body" id="epic-prev"><div class="skel"></div></div>
@@ -73,13 +98,14 @@
         <div class="panel-h"><span class="feed">FEED</span><span class="panel-title">SPACE WEATHER</span><span class="tag" id="donki-n">—</span></div>
         <div class="panel-b list" id="donki-prev"></div>
       </div>
+    </section>
+
+    <!-- RIGHT -->
+    <section class="col feeds">
       <div class="panel">
         <div class="panel-h"><span class="feed">FEED</span><span class="panel-title">NATURAL EVENTS</span><span class="tag" id="eonet-n">—</span></div>
         <div class="panel-b list" id="eonet-prev"></div>
       </div>
-    </section>
-
-    <section class="col feeds">
       <div class="panel">
         <div class="panel-h"><span class="feed">FEED</span><span class="panel-title">ISS MISSION STATUS</span><span class="tag" id="mis-n">—</span></div>
         <div class="panel-b list" id="mis-prev"></div>

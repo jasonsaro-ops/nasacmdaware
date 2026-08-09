@@ -3,8 +3,11 @@
   const $ = s => document.querySelector(s);
   const $$ = s => document.querySelectorAll(s);
 
-  let world = null;
-  let satRecords = {}; // id -> {satrec, name, color, enabled, pos, path}
+  let world = null, slWorld = null;
+  let satRecords = {};
+  let starlinkSats = []; // {id, name, satrec, raan, inc, color, trainId, pos}
+  let starlinkTrains = []; // {id, label, color, raan, inc, count, sats[]}
+  let activeTrainId = null;
   let neoData = [], newsCache = [], donkiCache = [], eonetCache = [];
   let epicCache = null, audioCtx = null, zTop = 100000;
   let neoRot = 0, neoAnim = null;
@@ -32,24 +35,23 @@
         o.type = 'sine'; o.frequency.value = f;
         const s = t + i * 0.06;
         g.gain.setValueAtTime(0, s);
-        g.gain.linearRampToValueAtTime(0.11 - i * 0.02, s + 0.04);
-        g.gain.exponentialRampToValueAtTime(0.001, s + 0.55);
+        g.gain.linearRampToValueAtTime(0.1 - i * 0.02, s + 0.04);
+        g.gain.exponentialRampToValueAtTime(0.001, s + 0.5);
         o.connect(g); g.connect(audioCtx.destination);
-        o.start(s); o.stop(s + 0.6);
+        o.start(s); o.stop(s + 0.55);
       });
     } catch (_) {}
   }
 
   setInterval(() => { $('#utc').textContent = utc(); $('#loc').textContent = loc(); }, 1000);
 
-  /* —— Floating windows —— */
-  function openFloat(id, title, html, w = 480, h = 400) {
+  function openFloat(id, title, html, w = 460, h = 380) {
     let el = document.getElementById('f-' + id);
     if (el) { el.style.zIndex = ++zTop; return el; }
     el = document.createElement('div');
     el.className = 'float';
     el.id = 'f-' + id;
-    el.style.cssText = `width:${w}px;height:${h}px;left:${Math.max(24,(innerWidth-w)/2+(Math.random()*50-25))}px;top:${Math.max(52,(innerHeight-h)/2+(Math.random()*40-20))}px;z-index:${++zTop}`;
+    el.style.cssText = `width:${w}px;height:${h}px;left:${Math.max(20,(innerWidth-w)/2+(Math.random()*40-20))}px;top:${Math.max(48,(innerHeight-h)/2+(Math.random()*30-15))}px;z-index:${++zTop}`;
     el.innerHTML = `<div class="float-h"><span>${title}</span><button class="x" type="button">×</button></div><div class="float-b">${html}</div>`;
     $('#float-layer').appendChild(el);
     el.querySelector('.x').onclick = e => { e.stopPropagation(); el.remove(); };
@@ -62,75 +64,31 @@
     };
     window.addEventListener('mousemove', e => {
       if (!drag) return;
-      el.style.left = Math.max(0, Math.min(innerWidth - 80, e.clientX - ox)) + 'px';
-      el.style.top = Math.max(0, Math.min(innerHeight - 40, e.clientY - oy)) + 'px';
+      el.style.left = Math.max(0, Math.min(innerWidth - 60, e.clientX - ox)) + 'px';
+      el.style.top = Math.max(0, Math.min(innerHeight - 30, e.clientY - oy)) + 'px';
     });
     window.addEventListener('mouseup', () => { drag = false; });
     return el;
   }
 
-  /* ========== 3D GLOBE (issinfo-style) ========== */
-  function initGlobe() {
-    const el = $('#globe-container');
-    if (!el || world) return;
-    const w = el.clientWidth || 400;
-    const h = el.clientHeight || 300;
-
-    world = Globe()
-      (el)
-      .width(w)
-      .height(h)
-      .backgroundColor('#000000')
-      .globeImageUrl('https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg')
-      .bumpImageUrl('https://unpkg.com/three-globe/example/img/earth-topology.png')
-      .atmosphereColor('#4a9eff')
-      .atmosphereAltitude(0.15)
-      .pointsData([])
-      .pointAltitude(0.01)
-      .pointRadius(0.45)
-      .pointColor('color')
-      .pointsMerge(false)
-      .pathsData([])
-      .pathColor('color')
-      .pathStroke(0.8)
-      .pathPointAlt(0.008)
-      .pathDashLength(0.01)
-      .pathDashGap(0)
-      .labelsData([])
-      .labelText('name')
-      .labelSize(1.2)
-      .labelColor('color')
-      .labelDotRadius(0.3)
-      .labelAltitude(0.02)
-      .labelResolution(2);
-
-    // Auto-rotate slowly
-    world.controls().autoRotate = true;
-    world.controls().autoRotateSpeed = 0.35;
-    world.controls().enableZoom = true;
-
-    window.addEventListener('resize', () => {
-      if (!world) return;
-      const c = $('#globe-container');
-      world.width(c.clientWidth).height(c.clientHeight);
-    });
-  }
-
+  /* ========== SGP4 helpers ========== */
   function propPos(satrec, date) {
     try {
       const pv = satellite.propagate(satrec, date);
       if (!pv.position) return null;
       const gmst = satellite.gstime(date);
       const gd = satellite.eciToGeodetic(pv.position, gmst);
-      const lat = satellite.degreesLat(gd.latitude);
-      const lon = satellite.degreesLong(gd.longitude);
-      const alt = gd.height;
       let vel = 0;
       if (pv.velocity) {
         const v = pv.velocity;
         vel = Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z) * 3600;
       }
-      return { lat, lon, alt, vel };
+      return {
+        lat: satellite.degreesLat(gd.latitude),
+        lon: satellite.degreesLong(gd.longitude),
+        alt: gd.height,
+        vel
+      };
     } catch (_) { return null; }
   }
 
@@ -144,172 +102,324 @@
     return pts;
   }
 
-  async function loadSatTLEs() {
+  function makeSatrec(item) {
+    try {
+      if (item.EPOCH && item.MEAN_MOTION) return satellite.json2satrec(item);
+      if (item.TLE_LINE1 && item.TLE_LINE2) return satellite.twoline2satrec(item.TLE_LINE1, item.TLE_LINE2);
+    } catch (_) {}
+    return null;
+  }
+
+  /* ========== MAJOR SATS GLOBE ========== */
+  function initGlobe() {
+    const el = $('#globe-container');
+    if (!el || world) return;
+    world = Globe()(el)
+      .width(el.clientWidth || 400)
+      .height(el.clientHeight || 280)
+      .backgroundColor('#000000')
+      .globeImageUrl('https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg')
+      .bumpImageUrl('https://unpkg.com/three-globe/example/img/earth-topology.png')
+      .atmosphereColor('#4a9eff')
+      .atmosphereAltitude(0.14)
+      .pointsData([])
+      .pointAltitude(0.012)
+      .pointRadius(0.5)
+      .pointColor('color')
+      .pathsData([])
+      .pathColor('color')
+      .pathStroke(0.7)
+      .pathPointAlt(0.008)
+      .labelsData([])
+      .labelText('name')
+      .labelSize(1.1)
+      .labelColor('color')
+      .labelDotRadius(0.25)
+      .labelAltitude(0.02);
+    world.controls().autoRotate = true;
+    world.controls().autoRotateSpeed = 0.3;
+  }
+
+  function initSlGlobe() {
+    const el = $('#sl-globe-container');
+    if (!el || slWorld) return;
+    slWorld = Globe()(el)
+      .width(el.clientWidth || 300)
+      .height(el.clientHeight || 200)
+      .backgroundColor('#000000')
+      .globeImageUrl('https://unpkg.com/three-globe/example/img/earth-night.jpg')
+      .atmosphereColor('#00e8ff')
+      .atmosphereAltitude(0.12)
+      .pointsData([])
+      .pointAltitude(0.01)
+      .pointRadius(0.25)
+      .pointColor('color')
+      .pathsData([])
+      .pathColor('color')
+      .pathStroke(0.4)
+      .pathPointAlt(0.006);
+    slWorld.controls().autoRotate = true;
+    slWorld.controls().autoRotateSpeed = 0.4;
+  }
+
+  async function loadMajorSats() {
     initGlobe();
     const wanted = new Map(CONFIG.sats.map(s => [s.id, s]));
-    const urls = [
-      CONFIG.endpoints.tleStations,
-      CONFIG.endpoints.tleVisual,
-      CONFIG.endpoints.tleWeather,
-      CONFIG.endpoints.tleResource
-    ];
+    const urls = [CONFIG.endpoints.tleStations, CONFIG.endpoints.tleVisual, CONFIG.endpoints.tleWeather, CONFIG.endpoints.tleResource];
     const all = [];
     for (const url of urls) {
       try {
         const data = await get(url);
         if (Array.isArray(data)) all.push(...data);
-      } catch (e) { console.warn('TLE', url, e.message); }
+      } catch (e) { console.warn('TLE', e.message); }
     }
-
     all.forEach(item => {
       const id = item.NORAD_CAT_ID || item.norad_cat_id;
       if (!wanted.has(id)) return;
       const meta = wanted.get(id);
-      try {
-        let rec = null;
-        if (item.EPOCH && item.MEAN_MOTION) rec = satellite.json2satrec(item);
-        else if (item.TLE_LINE1 && item.TLE_LINE2) rec = satellite.twoline2satrec(item.TLE_LINE1, item.TLE_LINE2);
-        if (!rec || rec.error) return;
-        satRecords[id] = {
-          satrec: rec, name: meta.name, color: meta.color,
-          enabled: true, primary: !!meta.primary, pos: null, path: []
-        };
-      } catch (e) { console.warn('satrec', id, e); }
+      const rec = makeSatrec(item);
+      if (!rec || rec.error) return;
+      satRecords[id] = { satrec: rec, name: meta.name, color: meta.color, enabled: true, primary: !!meta.primary };
     });
 
-    // Build toggles
     const tog = $('#sat-toggles');
-    tog.innerHTML = '<div class="hd">OTHER SATELLITES</div>' + CONFIG.sats.map(s => {
-      const on = satRecords[s.id] || s.id === 25544;
+    tog.innerHTML = '<div class="hd">ASSETS</div>' + CONFIG.sats.map(s => {
+      const on = !!satRecords[s.id] || s.id === 25544;
       return `<label data-id="${s.id}">
-        <input type="checkbox" ${on && (satRecords[s.id]?.enabled !== false) ? 'checked' : ''} ${on ? '' : 'disabled'}>
+        <input type="checkbox" ${on ? 'checked' : ''} ${on ? '' : 'disabled'}>
         <i class="dot" style="background:${s.color}"></i>${s.name}
       </label>`;
     }).join('');
-
     tog.querySelectorAll('label').forEach(lab => {
-      const id = +lab.dataset.id;
       lab.querySelector('input').onchange = e => {
-        if (satRecords[id]) {
-          satRecords[id].enabled = e.target.checked;
-          updateGlobe();
-        }
+        const id = +lab.dataset.id;
+        if (satRecords[id]) { satRecords[id].enabled = e.target.checked; updateMajorGlobe(); }
       };
     });
-
     $('#sat-count').textContent = Object.keys(satRecords).length + ' SATS';
-    updateGlobe();
+    updateMajorGlobe();
   }
 
-  function updateGlobe() {
+  function updateMajorGlobe() {
     if (!world) return;
     const now = new Date();
-    const points = [];
-    const paths = [];
-    const labels = [];
-    const barRows = [];
+    const points = [], paths = [], labels = [], barRows = [];
 
     Object.keys(satRecords).forEach(idStr => {
       const id = +idStr;
       const rec = satRecords[id];
       if (!rec || !rec.enabled) return;
-
       const pos = propPos(rec.satrec, now);
       if (!pos) return;
-      rec.pos = pos;
-
-      // Full orbit ring (~1–2 periods)
-      const pathPts = orbitPath(rec.satrec, 3, 110);
-      rec.path = pathPts;
-
+      const pathPts = orbitPath(rec.satrec, 3, 100);
       points.push({ lat: pos.lat, lng: pos.lon, color: rec.color, name: rec.name, id });
       labels.push({ lat: pos.lat, lng: pos.lon, name: rec.name, color: rec.color });
-      if (pathPts.length > 2) {
-        paths.push({ coords: pathPts.map(p => [p[0], p[1]]), color: rec.color, id });
-      }
-
+      if (pathPts.length > 2) paths.push({ coords: pathPts.map(p => [p[0], p[1]]), color: rec.color });
       barRows.push({ id, name: rec.name, color: rec.color, ...pos });
     });
 
-    // ISS high-accuracy overlay from WTIA
-    updateISSOverlay(points, paths, labels, barRows).then(() => {
-      world.pointsData(points)
-        .pointColor(d => d.color)
-        .pathsData(paths)
-        .pathColor(d => d.color)
-        .labelsData(labels)
-        .labelColor(d => d.color);
-
-      // Bottom bar
-      const bar = $('#sat-bar');
-      bar.innerHTML = barRows.map(s => `
-        <div class="sb ${s.id === focusId ? 'active' : ''}" data-id="${s.id}">
-          <i class="dot" style="background:${s.color}"></i>
-          <span class="nm">${s.name}</span>
-          <span class="tv">Lat ${s.lat.toFixed(2)}°</span>
-          <span class="tv">Lon ${s.lon.toFixed(2)}°</span>
-          <span class="tv">Alt ${s.alt.toFixed(0)} km</span>
-          <span class="tv">Vel ${Math.round(s.vel).toLocaleString()} km/h</span>
-        </div>`).join('');
-
-      bar.querySelectorAll('.sb').forEach(el => {
-        el.onclick = () => {
-          focusId = +el.dataset.id;
-          const s = barRows.find(x => x.id === focusId);
-          if (s) openSatDetail(s);
-          updateGlobe();
-        };
-      });
-    });
+    // ISS WTIA overlay
+    get(CONFIG.endpoints.iss).then(d => {
+      const lat = d.latitude, lon = d.longitude, alt = d.altitude, vel = d.velocity;
+      const ix = points.findIndex(p => p.id === 25544);
+      const pt = { lat, lng: lon, color: '#ffffff', name: 'ISS', id: 25544 };
+      if (ix >= 0) points[ix] = pt; else points.push(pt);
+      const bi = barRows.findIndex(b => b.id === 25544);
+      const row = { id: 25544, name: 'ISS', color: '#ffffff', lat, lon, alt, vel };
+      if (bi >= 0) barRows[bi] = row; else barRows.push(row);
+      paintMajor(points, paths, labels, barRows);
+    }).catch(() => paintMajor(points, paths, labels, barRows));
   }
 
-  async function updateISSOverlay(points, paths, labels, barRows) {
-    try {
-      const d = await get(CONFIG.endpoints.iss);
-      const lat = d.latitude, lon = d.longitude, alt = d.altitude, vel = d.velocity;
-      // Replace ISS point if present
-      const ix = points.findIndex(p => p.id === 25544);
-      const issPt = { lat, lng: lon, color: '#ffffff', name: 'ISS', id: 25544 };
-      if (ix >= 0) points[ix] = issPt; else points.push(issPt);
-
-      const li = labels.findIndex(l => l.name === 'ISS');
-      const issLab = { lat, lng: lon, name: 'ISS', color: '#ffffff' };
-      if (li >= 0) labels[li] = issLab; else labels.push(issLab);
-
-      const bi = barRows.findIndex(b => b.id === 25544);
-      const issBar = { id: 25544, name: 'ISS', color: '#ffffff', lat, lon, alt, vel };
-      if (bi >= 0) barRows[bi] = issBar; else barRows.push(issBar);
-
-      if (satRecords[25544]) {
-        satRecords[25544].pos = { lat, lon, alt, vel };
-      } else {
-        satRecords[25544] = { satrec: null, name: 'ISS', color: '#ffffff', enabled: true, primary: true, pos: { lat, lon, alt, vel }, path: [] };
-      }
-    } catch (e) { console.warn('WTIA ISS', e.message); }
+  function paintMajor(points, paths, labels, barRows) {
+    world.pointsData(points).pointColor(d => d.color)
+      .pathsData(paths).pathColor(d => d.color)
+      .labelsData(labels).labelColor(d => d.color);
+    const bar = $('#sat-bar');
+    bar.innerHTML = barRows.map(s => `
+      <div class="sb ${s.id === focusId ? 'active' : ''}" data-id="${s.id}">
+        <i class="dot" style="background:${s.color}"></i>
+        <span class="nm">${s.name}</span>
+        <span class="tv">Lat ${s.lat.toFixed(2)}°</span>
+        <span class="tv">Lon ${s.lon.toFixed(2)}°</span>
+        <span class="tv">Alt ${s.alt.toFixed(0)} km</span>
+        <span class="tv">Vel ${Math.round(s.vel).toLocaleString()} km/h</span>
+      </div>`).join('');
+    bar.querySelectorAll('.sb').forEach(el => {
+      el.onclick = () => {
+        focusId = +el.dataset.id;
+        const s = barRows.find(x => x.id === focusId);
+        if (s) openSatDetail(s);
+      };
+    });
   }
 
   function openSatDetail(s) {
     openFloat('sat-' + s.id, s.name + ' · TELEMETRY', `
       <table class="float-table">
         <tr><th>Satellite</th><td>${s.name}</td></tr>
-        <tr><th>NORAD ID</th><td>${s.id}</td></tr>
+        <tr><th>NORAD</th><td>${s.id}</td></tr>
         <tr><th>Latitude</th><td>${s.lat.toFixed(4)}°</td></tr>
         <tr><th>Longitude</th><td>${s.lon.toFixed(4)}°</td></tr>
         <tr><th>Altitude</th><td>${s.alt.toFixed(2)} km</td></tr>
         <tr><th>Velocity</th><td>${Math.round(s.vel).toLocaleString()} km/h</td></tr>
-      </table>
-      <p style="margin-top:10px">Orbital path shown on 3D globe. ISS position refined via WhereTheISS.at; others via Celestrak TLE + SGP4.</p>
-    `, 360, 320);
+      </table>`, 340, 300);
+  }
+
+  /* ========== STARLINK TRAINS ========== */
+  async function loadStarlink() {
+    initSlGlobe();
+    try {
+      const data = await get(CONFIG.endpoints.tleStarlink);
+      if (!Array.isArray(data) || !data.length) {
+        $('#sl-count').textContent = 'UNAVAILABLE';
+        $('#sl-trains').innerHTML = '<div class="sl-train"><div class="tm">Celestrak unavailable (CORS or rate limit). Retry later.</div></div>';
+        return;
+      }
+
+      // Limit for performance — sample up to 600 active
+      const sample = data.filter(d => {
+        const name = (d.OBJECT_NAME || d.object_name || '').toUpperCase();
+        return name.includes('STARLINK');
+      }).slice(0, 800);
+
+      starlinkSats = [];
+      sample.forEach(item => {
+        const rec = makeSatrec(item);
+        if (!rec || rec.error) return;
+        const id = item.NORAD_CAT_ID || item.norad_cat_id;
+        const name = (item.OBJECT_NAME || item.object_name || 'STARLINK').replace('STARLINK ', 'SL-');
+        const raan = item.RA_OF_ASC_NODE ?? item.ra_of_asc_node ?? 0;
+        const inc = item.INCLINATION ?? item.inclination ?? 53;
+        const mm = item.MEAN_MOTION ?? item.mean_motion ?? 15.1;
+        starlinkSats.push({ id, name, satrec: rec, raan, inc, mm, pos: null });
+      });
+
+      // Cluster into trains by RAAN (10°) + inclination (0.5°) + mean motion band
+      const bins = new Map();
+      starlinkSats.forEach(s => {
+        const raanBin = Math.round(s.raan / 10) * 10;
+        const incBin = Math.round(s.inc * 2) / 2;
+        const shell = s.mm > 15.2 ? 'SHELL-A' : s.mm > 14.8 ? 'SHELL-B' : 'SHELL-C';
+        const key = `${shell}|${incBin}|${raanBin}`;
+        if (!bins.has(key)) bins.set(key, []);
+        bins.get(key).push(s);
+      });
+
+      // Keep trains with at least 3 sats
+      starlinkTrains = [];
+      let ti = 0;
+      [...bins.entries()]
+        .filter(([, sats]) => sats.length >= 3)
+        .sort((a, b) => b[1].length - a[1].length)
+        .slice(0, 40)
+        .forEach(([key, sats]) => {
+          const color = CONFIG.starlinkColors[ti % CONFIG.starlinkColors.length];
+          const [shell, inc, raan] = key.split('|');
+          const train = {
+            id: 'T' + ti,
+            label: `${shell} · i${inc}° · Ω${raan}°`,
+            color,
+            shell, inc: +inc, raan: +raan,
+            count: sats.length,
+            sats
+          };
+          sats.forEach(s => { s.trainId = train.id; s.color = color; });
+          starlinkTrains.push(train);
+          ti++;
+        });
+
+      $('#sl-count').textContent = starlinkSats.length + ' / ' + starlinkTrains.length + ' TRAINS';
+      renderTrainList();
+      // Default: show densest train
+      if (starlinkTrains.length) isolateTrain(starlinkTrains[0].id);
+    } catch (e) {
+      console.error('Starlink', e);
+      $('#sl-count').textContent = 'ERROR';
+      $('#sl-trains').innerHTML = `<div class="sl-train"><div class="tm">${e.message}</div></div>`;
+    }
+  }
+
+  function renderTrainList() {
+    const el = $('#sl-trains');
+    el.innerHTML = starlinkTrains.map(t => `
+      <div class="sl-train ${t.id === activeTrainId ? 'active' : ''}" data-id="${t.id}">
+        <div class="tn"><i class="dot" style="background:${t.color}"></i>${t.label}</div>
+        <div class="tm">${t.count} sats · i=${t.inc}° · Ω=${t.raan}°</div>
+      </div>`).join('');
+    el.querySelectorAll('.sl-train').forEach(row => {
+      row.onclick = () => isolateTrain(row.dataset.id);
+    });
+  }
+
+  function isolateTrain(trainId) {
+    activeTrainId = trainId;
+    renderTrainList();
+    updateStarlinkGlobe();
+  }
+
+  function updateStarlinkGlobe() {
+    if (!slWorld) return;
+    const train = starlinkTrains.find(t => t.id === activeTrainId);
+    if (!train) {
+      slWorld.pointsData([]).pathsData([]);
+      $('#sl-telem').innerHTML = '<div class="sl-telem-h">SELECT A TRAIN</div><div class="sl-telem-b">Click a train to isolate and view telemetry.</div>';
+      return;
+    }
+
+    const now = new Date();
+    const points = [];
+    const paths = [];
+    const telemRows = [];
+
+    // Limit path rendering to first 12 sats in train for perf
+    train.sats.forEach((s, idx) => {
+      const pos = propPos(s.satrec, now);
+      if (!pos) return;
+      s.pos = pos;
+      points.push({ lat: pos.lat, lng: pos.lon, color: train.color, name: s.name, id: s.id });
+      if (idx < 12) {
+        const pathPts = orbitPath(s.satrec, 4, 95);
+        if (pathPts.length > 2) {
+          paths.push({ coords: pathPts.map(p => [p[0], p[1]]), color: train.color });
+        }
+      }
+      telemRows.push({ ...s, ...pos });
+    });
+
+    slWorld.pointsData(points).pointColor(d => d.color)
+      .pathsData(paths).pathColor(d => d.color);
+
+    $('#sl-telem').innerHTML = `
+      <div class="sl-telem-h">${train.label} · ${telemRows.length} SATS</div>
+      ${telemRows.slice(0, 24).map(s => `
+        <div class="sl-sat-row" data-id="${s.id}">
+          <span class="sn">${s.name.replace('STARLINK-', 'SL-').slice(0, 12)}</span>
+          <span>${s.lat.toFixed(1)}°</span>
+          <span>${s.lon.toFixed(1)}°</span>
+          <span>${s.alt.toFixed(0)}km</span>
+        </div>`).join('')}
+      ${telemRows.length > 24 ? `<div class="sl-telem-b">+${telemRows.length - 24} more</div>` : ''}`;
+
+    $$('#sl-telem .sl-sat-row').forEach(row => {
+      row.onclick = e => {
+        e.stopPropagation();
+        const s = telemRows.find(x => x.id === +row.dataset.id);
+        if (s) openSatDetail({ id: s.id, name: s.name, color: train.color, lat: s.lat, lon: s.lon, alt: s.alt, vel: s.vel });
+      };
+    });
   }
 
   /* ========== NEO ========== */
   function project(lat, lon, R, rot) {
     const lonR = (lon + rot) * Math.PI / 180;
     const latR = lat * Math.PI / 180;
-    const x = R * Math.cos(latR) * Math.sin(lonR);
-    const y = -R * Math.sin(latR);
-    const z = R * Math.cos(latR) * Math.cos(lonR);
-    return { x, y, z, visible: z > -R * 0.12 };
+    return {
+      x: R * Math.cos(latR) * Math.sin(lonR),
+      y: -R * Math.sin(latR),
+      z: R * Math.cos(latR) * Math.cos(lonR),
+      visible: R * Math.cos(latR) * Math.cos(lonR) > -R * 0.12
+    };
   }
 
   function drawNeoGlobe() {
@@ -325,21 +435,21 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
     const cx = w / 2, cy = h / 2, R = Math.min(w, h) * 0.4;
-    ctx.fillStyle = '#0a1828';
-    for (let i = 0; i < 50; i++) {
-      ctx.globalAlpha = 0.3; ctx.fillRect((i * 97) % w, (i * 53) % h, 1, 1);
+    for (let i = 0; i < 40; i++) {
+      ctx.globalAlpha = 0.3; ctx.fillStyle = '#8af';
+      ctx.fillRect((i * 97) % w, (i * 53) % h, 1, 1);
     }
     ctx.globalAlpha = 1;
     const grd = ctx.createRadialGradient(cx - R * 0.3, cy - R * 0.3, R * 0.1, cx, cy, R);
     grd.addColorStop(0, '#1a6a9a'); grd.addColorStop(0.55, '#0d4a6e'); grd.addColorStop(1, '#062030');
     ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.fillStyle = grd; ctx.fill();
-    ctx.strokeStyle = 'rgba(0,229,255,0.3)'; ctx.lineWidth = 1.2; ctx.stroke();
+    ctx.strokeStyle = 'rgba(0,232,255,0.3)'; ctx.lineWidth = 1; ctx.stroke();
     neoData.forEach(n => {
       const alt = Math.min(0.5, 0.08 + n.ld * 0.04);
       const p = project(n.vizLat, n.vizLon, R * (1 + alt), neoRot);
       if (!p.visible) return;
       ctx.beginPath(); ctx.arc(cx + p.x, cy + p.y, n.haz ? 3 : 2, 0, Math.PI * 2);
-      ctx.fillStyle = n.haz ? '#ff3b30' : '#00e5ff'; ctx.fill();
+      ctx.fillStyle = n.haz ? '#ff3b30' : '#00e8ff'; ctx.fill();
     });
   }
 
@@ -354,11 +464,11 @@
       <table class="float-table">
         <tr><th>Name</th><td>${n.name}</td></tr>
         <tr><th>Approach</th><td>${n.date}</td></tr>
-        <tr><th>Miss distance</th><td>${n.ld.toFixed(3)} LD (${(n.ld * 384400).toFixed(0)} km)</td></tr>
+        <tr><th>Miss</th><td>${n.ld.toFixed(3)} LD (${(n.ld * 384400).toFixed(0)} km)</td></tr>
         <tr><th>Velocity</th><td>${n.vel.toFixed(2)} km/s</td></tr>
-        <tr><th>Est. size</th><td>~${n.size} m</td></tr>
-        <tr><th>Hazardous</th><td class="${n.haz ? 'pha' : ''}">${n.haz ? 'YES' : 'No'}</td></tr>
-      </table>`, 360, 300);
+        <tr><th>Size</th><td>~${n.size} m</td></tr>
+        <tr><th>PHA</th><td class="${n.haz ? 'pha' : ''}">${n.haz ? 'YES' : 'No'}</td></tr>
+      </table>`, 340, 280);
   }
 
   async function loadNEO() {
@@ -379,7 +489,6 @@
           neoData.push({
             id: n.id, name: (n.name || '').replace(/[()]/g, ''),
             date: a.close_approach_date, ld, vel, size: Math.round((dmin + dmax) / 2), haz,
-            abs: n.absolute_magnitude_h,
             vizLat: ((hash % 140) - 70) * 0.85, vizLon: ((hash * 13) % 360) - 180
           });
         });
@@ -389,12 +498,11 @@
       $('#neo-pha').textContent = pha;
       $('#neo-close').textContent = isFinite(minLd) ? minLd.toFixed(2) : '—';
       $('#neo-n').textContent = neoData.length + ' OBJ';
-      $('#neo-list').innerHTML = neoData.slice(0, 40).map(n =>
+      $('#neo-list').innerHTML = neoData.slice(0, 35).map(n =>
         `<div class="ni ${n.haz ? 'pha' : ''}" data-id="${n.id}">
           <div class="nm">${n.name}</div>
-          <div class="mt">${n.date} · ${n.ld.toFixed(2)} LD${n.haz ? ' · PHA' : ''}</div>
-        </div>`
-      ).join('');
+          <div class="mt">${n.date} · ${n.ld.toFixed(2)} LD</div>
+        </div>`).join('');
       $$('#neo-list .ni').forEach(el => {
         el.onclick = e => {
           e.stopPropagation();
@@ -406,11 +514,11 @@
     } catch (e) { console.error('NEO', e); }
   }
 
-  /* ========== EPIC ========== */
+  /* ========== EPIC / DONKI / EONET / MISSIONS ========== */
   async function loadEPIC() {
     try {
       const imgs = await get(`${CONFIG.endpoints.epic}?api_key=${CONFIG.API_KEY}`);
-      if (!imgs?.length) { $('#epic-prev').innerHTML = '<div class="list-item">No EPIC data</div>'; return; }
+      if (!imgs?.length) return;
       epicCache = imgs[0];
       const [y, m, d] = epicCache.date.split(' ')[0].split('-');
       const src = `${CONFIG.endpoints.epicImg}/${y}/${m}/${d}/png/${epicCache.image}.png?api_key=${CONFIG.API_KEY}`;
@@ -425,27 +533,19 @@
           <div class="row"><span class="k">CENTROID</span><span class="v">${(c.lat || 0).toFixed(2)}° ${(c.lon || 0).toFixed(2)}°</span></div>
           <div class="row"><span class="k">DSCOVR</span><span class="v">L1 · ${dist.toFixed(2)} M km</span></div>
           <div class="row"><span class="k">FRAMES</span><span class="v">${imgs.length}</span></div>
-          <div class="row"><span class="k">CAPTION</span><span class="v" style="color:var(--text);font-family:var(--font);font-size:9px">${(epicCache.caption || '').slice(0, 100)}</span></div>
         </div>`;
-      $('#epic-img')?.addEventListener('click', openEPIC);
+      $('#epic-img')?.addEventListener('click', () => {
+        openFloat('epic', 'EPIC · L1', `
+          <img src="${src}" style="width:100%;max-width:320px;border-radius:50%;display:block;margin:0 auto" alt="">
+          <table class="float-table" style="margin-top:10px">
+            <tr><th>Date</th><td>${epicCache.date}</td></tr>
+            <tr><th>Centroid</th><td>${(c.lat || 0).toFixed(3)}°, ${(c.lon || 0).toFixed(3)}°</td></tr>
+            <tr><th>Caption</th><td>${epicCache.caption || '—'}</td></tr>
+          </table>`, 400, 480);
+      });
     } catch (e) { $('#epic-prev').innerHTML = `<div class="list-item">${e.message}</div>`; }
   }
 
-  function openEPIC() {
-    if (!epicCache) return;
-    const [y, m, d] = epicCache.date.split(' ')[0].split('-');
-    const src = `${CONFIG.endpoints.epicImg}/${y}/${m}/${d}/png/${epicCache.image}.png?api_key=${CONFIG.API_KEY}`;
-    const c = epicCache.centroid_coordinates || {};
-    openFloat('epic', 'EPIC · DSCOVR L1', `
-      <img src="${src}" style="width:100%;max-width:340px;border-radius:50%;display:block;margin:0 auto" alt="">
-      <table class="float-table" style="margin-top:12px">
-        <tr><th>Date</th><td>${epicCache.date}</td></tr>
-        <tr><th>Centroid</th><td>${(c.lat || 0).toFixed(3)}°, ${(c.lon || 0).toFixed(3)}°</td></tr>
-        <tr><th>Caption</th><td>${epicCache.caption || '—'}</td></tr>
-      </table>`, 420, 500);
-  }
-
-  /* ========== DONKI ========== */
   async function loadDONKI() {
     try {
       const start = ago(5);
@@ -456,31 +556,31 @@
         get(`${CONFIG.endpoints.donkiGST}?startDate=${start}&endDate=${today()}&api_key=${CONFIG.API_KEY}`).catch(() => [])
       ]);
       donkiCache = [];
-      (notes || []).slice(0, 8).forEach(n => donkiCache.push({
+      (notes || []).slice(0, 6).forEach(n => donkiCache.push({
         type: (n.messageType || 'NOTE').toUpperCase(),
         title: n.messageID || n.messageType,
         time: (n.messageIssueTime || '').replace('T', ' ').slice(0, 16),
-        body: (n.messageBody || '').slice(0, 300)
+        body: (n.messageBody || '').slice(0, 280)
       }));
-      (cmes || []).slice(0, 5).forEach(c => {
+      (cmes || []).slice(0, 4).forEach(c => {
         const sp = c.cmeAnalyses?.[0]?.speed;
-        donkiCache.push({ type: 'CME', title: `CME${sp ? ' · ' + Math.round(sp) + ' km/s' : ''}`, time: (c.startTime || '').replace('T', ' ').slice(0, 16), body: (c.note || '').slice(0, 200) });
+        donkiCache.push({ type: 'CME', title: `CME${sp ? ' · ' + Math.round(sp) + ' km/s' : ''}`, time: (c.startTime || '').replace('T', ' ').slice(0, 16), body: (c.note || '').slice(0, 180) });
       });
-      (flrs || []).slice(0, 5).forEach(f => donkiCache.push({
+      (flrs || []).slice(0, 4).forEach(f => donkiCache.push({
         type: 'FLARE ' + (f.classType || ''),
-        title: f.sourceLocation || f.flrID || 'Solar Flare',
+        title: f.sourceLocation || f.flrID || 'Flare',
         time: (f.beginTime || '').replace('T', ' ').slice(0, 16),
-        body: `Class ${f.classType || '—'} · Peak ${(f.peakTime || '').slice(11, 16)}`
+        body: `Class ${f.classType || '—'}`
       }));
-      (gsts || []).slice(0, 4).forEach(g => {
+      (gsts || []).slice(0, 3).forEach(g => {
         const kp = g.allKpIndex?.[0]?.kpIndex;
-        donkiCache.push({ type: 'GST', title: `Geomagnetic Storm${kp != null ? ' · Kp ' + kp : ''}`, time: (g.startTime || '').replace('T', ' ').slice(0, 16), body: '' });
+        donkiCache.push({ type: 'GST', title: `Geomagnetic${kp != null ? ' · Kp ' + kp : ''}`, time: (g.startTime || '').replace('T', ' ').slice(0, 16), body: '' });
       });
       donkiCache.sort((a, b) => (b.time || '').localeCompare(a.time || ''));
       $('#donki-n').textContent = donkiCache.length;
-      $('#donki-prev').innerHTML = donkiCache.slice(0, 10).map((e, i) =>
+      $('#donki-prev').innerHTML = donkiCache.slice(0, 9).map((e, i) =>
         `<div class="list-item" data-idx="${i}"><div class="t">${e.type} · ${e.time}</div><div class="n">${e.title}</div></div>`
-      ).join('') || '<div class="list-item">No recent events</div>';
+      ).join('') || '<div class="list-item">Quiet</div>';
       $$('#donki-prev .list-item[data-idx]').forEach(el => {
         el.onclick = () => {
           const e = donkiCache[+el.dataset.idx];
@@ -488,36 +588,32 @@
           openFloat('donki-' + el.dataset.idx, e.type, `
             <table class="float-table">
               <tr><th>Type</th><td>${e.type}</td></tr>
-              <tr><th>Time</th><td>${e.time} UTC</td></tr>
+              <tr><th>Time</th><td>${e.time}</td></tr>
               <tr><th>Title</th><td>${e.title}</td></tr>
             </table>
-            <p style="margin-top:10px">${e.body || 'No additional detail.'}</p>`, 420, 320);
+            <p style="margin-top:8px">${e.body || '—'}</p>`, 400, 300);
         };
       });
     } catch (e) { $('#donki-prev').innerHTML = `<div class="list-item">${e.message}</div>`; }
   }
 
-  /* ========== EONET ========== */
   async function loadEONET() {
     try {
-      const data = await get(`${CONFIG.endpoints.eonet}?status=open&limit=30`);
+      const data = await get(`${CONFIG.endpoints.eonet}?status=open&limit=25`);
       eonetCache = (data.events || []).map(ev => {
         const g = ev.geometry?.[ev.geometry.length - 1];
         const cat = ev.categories?.[0];
         return {
-          title: ev.title, cat: cat?.title || 'Event', id: cat?.id || '',
+          title: ev.title, cat: cat?.title || 'Event',
           date: g?.date?.slice(0, 10) || '', coords: g?.coordinates,
           sources: (ev.sources || []).map(s => s.id).join(', '),
           link: (ev.sources || [])[0]?.url || ''
         };
       });
       $('#eonet-n').textContent = eonetCache.length + ' OPEN';
-      $('#eonet-prev').innerHTML = eonetCache.slice(0, 12).map((e, i) =>
-        `<div class="list-item" data-idx="${i}">
-          <div class="t">${e.cat.toUpperCase()} · ${e.date}</div>
-          <div class="n">${e.title}</div>
-        </div>`
-      ).join('') || '<div class="list-item">No open events</div>';
+      $('#eonet-prev').innerHTML = eonetCache.slice(0, 10).map((e, i) =>
+        `<div class="list-item" data-idx="${i}"><div class="t">${e.cat.toUpperCase()} · ${e.date}</div><div class="n">${e.title}</div></div>`
+      ).join('') || '<div class="list-item">None</div>';
       $$('#eonet-prev .list-item[data-idx]').forEach(el => {
         el.onclick = () => {
           const e = eonetCache[+el.dataset.idx];
@@ -527,31 +623,30 @@
               <tr><th>Event</th><td>${e.title}</td></tr>
               <tr><th>Category</th><td>${e.cat}</td></tr>
               <tr><th>Date</th><td>${e.date}</td></tr>
-              <tr><th>Location</th><td>${e.coords ? e.coords[1].toFixed(3) + '°, ' + e.coords[0].toFixed(3) + '°' : '—'}</td></tr>
+              <tr><th>Location</th><td>${e.coords ? e.coords[1].toFixed(2) + '°, ' + e.coords[0].toFixed(2) + '°' : '—'}</td></tr>
               <tr><th>Sources</th><td>${e.sources || '—'}</td></tr>
             </table>
-            ${e.link ? `<p style="margin-top:10px"><a href="${e.link}" target="_blank" rel="noopener" style="color:var(--cyan)">Open source →</a></p>` : ''}`, 420, 340);
+            ${e.link ? `<p style="margin-top:8px"><a href="${e.link}" target="_blank" rel="noopener" style="color:var(--cyan)">Source →</a></p>` : ''}`, 400, 320);
         };
       });
     } catch (e) { console.error(e); }
   }
 
-  /* ========== Missions ========== */
   async function loadMissions() {
     try {
       const [issNews, crew] = await Promise.all([
-        get(`${CONFIG.endpoints.news}?limit=15&search=ISS&ordering=-published_at`),
+        get(`${CONFIG.endpoints.news}?limit=12&search=ISS&ordering=-published_at`),
         get('https://api.open-notify.org/astros.json').catch(() => null)
       ]);
       newsCache = issNews.results || [];
       let html = '';
       if (crew?.people) {
         const issCrew = crew.people.filter(p => (p.craft || '').toUpperCase().includes('ISS'));
-        html += `<div class="list-item" data-crew="1"><div class="t">CREW ONBOARD · ${issCrew.length || crew.number}</div>
+        html += `<div class="list-item" data-crew="1"><div class="t">CREW · ${issCrew.length || crew.number}</div>
           <div class="n" style="white-space:normal">${issCrew.map(p => p.name).join(' · ') || '—'}</div></div>`;
       }
-      html += newsCache.slice(0, 8).map((i, idx) =>
-        `<div class="list-item" data-news="${idx}"><div class="t">${(i.published_at || '').slice(0, 10)} · ${(i.news_site || '').slice(0, 12)}</div><div class="n">${i.title}</div></div>`
+      html += newsCache.slice(0, 7).map((i, idx) =>
+        `<div class="list-item" data-news="${idx}"><div class="t">${(i.published_at || '').slice(0, 10)}</div><div class="n">${i.title}</div></div>`
       ).join('');
       $('#mis-n').textContent = newsCache.length;
       $('#mis-prev').innerHTML = html;
@@ -561,9 +656,9 @@
           if (!i) return;
           openFloat('news-' + el.dataset.news, 'ISS UPDATE', `
             <h3>${i.title}</h3>
-            <p style="color:var(--muted);font-size:10px;margin:6px 0">${(i.published_at || '').slice(0, 16)} · ${i.news_site || ''}</p>
+            <p style="font-size:9px;color:var(--muted)">${(i.published_at || '').slice(0, 16)} · ${i.news_site || ''}</p>
             <p>${i.summary || ''}</p>
-            <p style="margin-top:10px"><a href="${i.url}" target="_blank" rel="noopener" style="color:var(--cyan)">Read full article →</a></p>`, 460, 380);
+            <p style="margin-top:8px"><a href="${i.url}" target="_blank" rel="noopener" style="color:var(--cyan)">Full article →</a></p>`, 440, 360);
         };
       });
       $$('#mis-prev .list-item[data-crew]').forEach(el => {
@@ -571,27 +666,25 @@
           if (!crew?.people) return;
           const issCrew = crew.people.filter(p => (p.craft || '').toUpperCase().includes('ISS'));
           openFloat('crew', 'ISS CREW', `
-            <table class="float-table">
-              ${issCrew.map(p => `<tr><th>${p.craft || 'ISS'}</th><td>${p.name}</td></tr>`).join('')}
-            </table>
-            <p style="margin-top:8px">Total people in space: ${crew.number}</p>`, 360, 300);
+            <table class="float-table">${issCrew.map(p => `<tr><th>${p.craft || 'ISS'}</th><td>${p.name}</td></tr>`).join('')}</table>
+            <p style="margin-top:6px">People in space: ${crew.number}</p>`, 340, 280);
         };
       });
 
-      const jpl = await get(`${CONFIG.endpoints.news}?limit=10&search=JPL&ordering=-published_at`);
+      const jpl = await get(`${CONFIG.endpoints.news}?limit=8&search=JPL&ordering=-published_at`);
       const jplItems = jpl.results || [];
-      $('#jpl-prev').innerHTML = jplItems.slice(0, 8).map((i, idx) =>
+      $('#jpl-prev').innerHTML = jplItems.slice(0, 7).map((i, idx) =>
         `<div class="list-item" data-jpl="${idx}"><div class="t">JPL · ${(i.published_at || '').slice(0, 10)}</div><div class="n">${i.title}</div></div>`
       ).join('') || '<div class="list-item">—</div>';
       $$('#jpl-prev .list-item[data-jpl]').forEach(el => {
         el.onclick = () => {
           const i = jplItems[+el.dataset.jpl];
           if (!i) return;
-          openFloat('jpl-' + el.dataset.jpl, 'JPL UPDATE', `
+          openFloat('jpl-' + el.dataset.jpl, 'JPL', `
             <h3>${i.title}</h3>
-            <p style="color:var(--muted);font-size:10px;margin:6px 0">${(i.published_at || '').slice(0, 16)} · ${i.news_site || ''}</p>
+            <p style="font-size:9px;color:var(--muted)">${(i.published_at || '').slice(0, 16)}</p>
             <p>${i.summary || ''}</p>
-            <p style="margin-top:10px"><a href="${i.url}" target="_blank" rel="noopener" style="color:var(--cyan)">Read full article →</a></p>`, 460, 380);
+            <p style="margin-top:8px"><a href="${i.url}" target="_blank" rel="noopener" style="color:var(--cyan)">Full article →</a></p>`, 440, 360);
         };
       });
     } catch (e) { console.error(e); }
@@ -601,10 +694,10 @@
     $$('.cam-slot').forEach(slot => {
       slot.addEventListener('click', () => {
         const src = (slot.dataset.src || '') + '&controls=1';
-        const label = slot.querySelector('.cam-label')?.textContent || 'CAMERA';
+        const label = slot.querySelector('.cam-label')?.textContent || 'CAM';
         openFloat('cam-' + slot.dataset.cam, 'LIVE · ' + label, `
-          <iframe src="${src}" style="width:100%;aspect-ratio:16/9;border:0;background:#000" allow="autoplay; encrypted-media" allowfullscreen></iframe>
-        `, 640, 400);
+          <iframe src="${src}" style="width:100%;aspect-ratio:16/9;border:0;background:#000" allow="autoplay;encrypted-media" allowfullscreen></iframe>
+        `, 620, 380);
       });
     });
   }
@@ -616,17 +709,32 @@
     $('#btn-refresh').style.opacity = '1';
   }
 
+  function onResize() {
+    if (world) {
+      const c = $('#globe-container');
+      if (c) world.width(c.clientWidth).height(c.clientHeight);
+    }
+    if (slWorld) {
+      const c = $('#sl-globe-container');
+      if (c) slWorld.width(c.clientWidth).height(c.clientHeight);
+    }
+    drawNeoGlobe();
+  }
+
   function init() {
     $('#utc').textContent = utc();
     $('#loc').textContent = loc();
     initGlobe();
+    initSlGlobe();
     bindCams();
-    loadSatTLEs();
-    setInterval(updateGlobe, CONFIG.satMs);
+    loadMajorSats();
+    loadStarlink();
+    setInterval(updateMajorGlobe, CONFIG.satMs);
+    setInterval(updateStarlinkGlobe, CONFIG.starlinkMs);
     refresh();
     setInterval(refresh, CONFIG.refreshMs);
-    window.addEventListener('resize', drawNeoGlobe);
-    $('#btn-refresh').onclick = refresh;
+    window.addEventListener('resize', onResize);
+    $('#btn-refresh').onclick = () => { refresh(); loadStarlink(); };
     $('#btn-audio').onclick = () => {
       CONFIG.audio = !CONFIG.audio;
       $('#btn-audio').textContent = CONFIG.audio ? '🔔' : '🔇';

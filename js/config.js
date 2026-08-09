@@ -14,7 +14,8 @@ const CONFIG = {
     tleStations: 'https://celestrak.org/NORAD/elements/gp.php?GROUP=stations&FORMAT=json',
     tleVisual: 'https://celestrak.org/NORAD/elements/gp.php?GROUP=visual&FORMAT=json',
     tleWeather: 'https://celestrak.org/NORAD/elements/gp.php?GROUP=weather&FORMAT=json',
-    tleResource: 'https://celestrak.org/NORAD/elements/gp.php?GROUP=resource&FORMAT=json'
+    tleResource: 'https://celestrak.org/NORAD/elements/gp.php?GROUP=resource&FORMAT=json',
+    tleStarlink: 'https://celestrak.org/NORAD/elements/gp.php?GROUP=starlink&FORMAT=json'
   },
   sats: [
     { id: 25544, name: 'ISS', color: '#ffffff', primary: true },
@@ -28,7 +29,10 @@ const CONFIG = {
     { id: 25994, name: 'Terra', color: '#81d4fa' },
     { id: 27424, name: 'Aqua', color: '#4fc3f7' }
   ],
-  satMs: 2500,
+  // Starlink train colors (cycle)
+  starlinkColors: ['#00e5ff', '#69f0ae', '#ffd600', '#ff9800', '#e040fb', '#81d4fa', '#ff5252', '#b388ff'],
+  satMs: 3000,
+  starlinkMs: 8000,
   refreshMs: 5 * 60 * 1000,
   audio: true
 };

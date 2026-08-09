@@ -1,18 +1,18 @@
 # NASA Mission Control
 
-Martian-inspired single-monitor console.
+Martian-inspired single-monitor console with 3D orbital tracking.
 
 ## Features
-- **Multi-sat orbital track** — ISS (live WTIA) + Tiangong, Hubble, Landsat 8/9, NOAA-20/21, Terra, Aqua via Celestrak TLE + satellite.js SGP4. Solid past / dashed future ground tracks. Click legend to focus.
-- **NEO globe + clickable list** — rotating Earth-in-space; list panel for details
-- **EPIC L1** — Earth image + centroid, DSCOVR range, caption
-- **Space Weather** — DONKI notifications, CMEs, flares, geomagnetic storms
-- **Natural Events** — EONET open events with coords/sources
-- **ISS Mission Status** — crew + ISS news
-- **Live cameras** — autoplay muted in tiles; click for full floating player
-- Floating windows always on top; SOL-style alert ping
+- **Major assets globe** — ISS, Tiangong, Hubble, Landsat, NOAA, Terra, Aqua with orbital paths
+- **Starlink constellation** — trains clustered by shell / inclination / RAAN; isolate a train to view live positions and per-sat telemetry
+- NEO globe + list, EPIC L1, DONKI weather, EONET events, ISS mission status, JPL, live cameras
+- All list rows open detail floating windows
+- Cyan technical UI (The Martian / Territory Studio inspired)
 
-APOD removed (API 504 issues).
+## Data
+- Celestrak GP TLEs + satellite.js SGP4
+- WhereTheISS.at for ISS refinement
+- NASA Open APIs + Spaceflight News API
 
 ## Deploy
-GitHub Pages or open index.html locally.
+GitHub Pages or open `index.html` locally.
