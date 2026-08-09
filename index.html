@@ -24,35 +24,43 @@
       <div class="clk-block"><span class="clk-l">UTC</span><span class="clk" id="utc">00:00:00</span></div>
       <div class="clk-block"><span class="clk-l">LOCAL</span><span class="clk" id="loc">00:00:00</span></div>
       <button class="btn" id="btn-refresh" title="Refresh">↻</button>
-      <button class="btn" id="btn-audio" title="Audio alerts">🔔</button>
+      <button class="btn" id="btn-audio" title="Audio">🔔</button>
     </div>
   </header>
 
   <main class="console">
+    <!-- SATELLITE TRACKER (ISS-style multi-sat) -->
     <section class="col maps">
-      <div class="panel tile-iss" data-panel="iss">
+      <div class="panel tile-sat" data-panel="sats">
         <div class="panel-h">
           <span class="feed">FEED</span>
-          <span class="panel-title">ISS ORBITAL TRACK</span>
-          <span class="tag" id="iss-vis">—</span>
+          <span class="panel-title">ORBITAL TRACK · ISS &amp; FLEET</span>
+          <span class="tag" id="sat-count">—</span>
         </div>
-        <div id="iss-map" class="map"></div>
-        <div class="telemetry-strip">
-          <div class="tel"><span class="tel-l">LAT</span><span class="tel-v" id="iss-lat">—</span></div>
-          <div class="tel"><span class="tel-l">LON</span><span class="tel-v" id="iss-lon">—</span></div>
-          <div class="tel"><span class="tel-l">ALT</span><span class="tel-v" id="iss-alt">—</span><span class="tel-u">km</span></div>
-          <div class="tel"><span class="tel-l">VEL</span><span class="tel-v" id="iss-vel">—</span><span class="tel-u">km/h</span></div>
+        <div id="sat-map" class="map"></div>
+        <div class="telemetry-strip" id="sat-telem">
+          <div class="tel"><span class="tel-l">FOCUS</span><span class="tel-v" id="sat-focus">ISS</span></div>
+          <div class="tel"><span class="tel-l">LAT</span><span class="tel-v" id="sat-lat">—</span></div>
+          <div class="tel"><span class="tel-l">LON</span><span class="tel-v" id="sat-lon">—</span></div>
+          <div class="tel"><span class="tel-l">ALT</span><span class="tel-v" id="sat-alt">—</span><span class="tel-u">km</span></div>
+          <div class="tel"><span class="tel-l">VEL</span><span class="tel-v" id="sat-vel">—</span><span class="tel-u">km/h</span></div>
         </div>
+        <div class="sat-legend" id="sat-legend"></div>
       </div>
-      <div class="panel tile-neo" data-panel="neo">
+
+      <!-- NEO: globe + list side by side -->
+      <div class="panel tile-neo">
         <div class="panel-h">
           <span class="feed">FEED</span>
           <span class="panel-title">NEAR-EARTH OBJECTS</span>
           <span class="tag" id="neo-n">—</span>
         </div>
-        <div id="neo-globe" class="globe-wrap">
-          <canvas id="neo-canvas"></canvas>
-          <div class="globe-label">EARTH · SPACE VIEW</div>
+        <div class="neo-split">
+          <div class="globe-wrap">
+            <canvas id="neo-canvas"></canvas>
+            <div class="globe-label">EARTH · SPACE VIEW</div>
+          </div>
+          <div class="neo-list" id="neo-list"></div>
         </div>
         <div class="telemetry-strip">
           <div class="tel"><span class="tel-l">WEEK</span><span class="tel-v" id="neo-tot">—</span></div>
@@ -63,13 +71,11 @@
     </section>
 
     <section class="col data">
-      <div class="panel clickable" data-panel="apod">
-        <div class="panel-h"><span class="feed">FEED</span><span class="panel-title">APOD</span><span class="tag" id="apod-d">—</span></div>
-        <div class="panel-b" id="apod-prev"><div class="skel"></div></div>
-      </div>
       <div class="panel clickable" data-panel="epic">
-        <div class="panel-h"><span class="feed">FEED</span><span class="panel-title">EPIC · L1</span><span class="tag" id="epic-d">—</span></div>
-        <div class="panel-b epic-prev" id="epic-prev"><div class="skel"></div></div>
+        <div class="panel-h"><span class="feed">FEED</span><span class="panel-title">EPIC · L1 EARTH</span><span class="tag" id="epic-d">—</span></div>
+        <div class="panel-b epic-body" id="epic-prev">
+          <div class="skel"></div>
+        </div>
       </div>
       <div class="panel clickable" data-panel="donki">
         <div class="panel-h"><span class="feed">FEED</span><span class="panel-title">SPACE WEATHER</span><span class="tag" id="donki-n">—</span></div>
@@ -83,19 +89,28 @@
 
     <section class="col feeds">
       <div class="panel clickable" data-panel="missions">
-        <div class="panel-h"><span class="feed">FEED</span><span class="panel-title">MISSION DIGEST</span><span class="tag" id="mis-n">—</span></div>
+        <div class="panel-h"><span class="feed">FEED</span><span class="panel-title">ISS MISSION STATUS</span><span class="tag" id="mis-n">—</span></div>
         <div class="panel-b list" id="mis-prev"></div>
       </div>
       <div class="panel clickable" data-panel="jpl">
         <div class="panel-h"><span class="feed">FEED</span><span class="panel-title">JPL · ROBOTIC</span></div>
         <div class="panel-b list" id="jpl-prev"></div>
       </div>
-      <div class="panel clickable" data-panel="cams">
+      <div class="panel" data-panel="cams">
         <div class="panel-h"><span class="feed">FEED</span><span class="panel-title">LIVE CAMERAS</span></div>
-        <div class="panel-b cams-mini">
-          <div class="cam-thumb">ISS HD</div>
-          <div class="cam-thumb">ISS ALT</div>
-          <div class="cam-thumb">JPL BAY</div>
+        <div class="panel-b cams-mini" id="cams-mini">
+          <div class="cam-slot" data-cam="iss1">
+            <iframe src="https://www.youtube.com/embed/awQzjn72bI0?autoplay=1&mute=1&controls=0&modestbranding=1" allow="autoplay; encrypted-media" allowfullscreen></iframe>
+            <span class="cam-label">ISS HD</span>
+          </div>
+          <div class="cam-slot" data-cam="iss2">
+            <iframe src="https://www.youtube.com/embed/M3HKLzjvKPc?autoplay=1&mute=1&controls=0&modestbranding=1" allow="autoplay; encrypted-media" allowfullscreen></iframe>
+            <span class="cam-label">ISS ALT</span>
+          </div>
+          <div class="cam-slot" data-cam="jpl">
+            <iframe src="https://www.youtube.com/embed/live_stream?channel=UCryGek9-xMZ4tqPL4r6_B1w&autoplay=1&mute=1&controls=0" allow="autoplay; encrypted-media" allowfullscreen></iframe>
+            <span class="cam-label">JPL BAY</span>
+          </div>
         </div>
       </div>
     </section>
@@ -104,6 +119,7 @@
   <div id="float-layer"></div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/satellite.js@5.0.0/dist/satellite.min.js"></script>
   <script src="js/config.js"></script>
   <script src="js/app.js"></script>
 </body>
