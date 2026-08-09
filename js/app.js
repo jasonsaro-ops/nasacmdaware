@@ -10,7 +10,7 @@
   let activeTrainId = null;
   let neoData = [], newsCache = [], donkiCache = [], eonetCache = [];
   let epicCache = null, audioCtx = null, zTop = 100000;
-  let neoRot = 0, neoAnim = null;
+  let neoRot = 0, neoAnim = null, neoZoom = 1;
   let focusId = 25544;
 
   const utc = () => new Date().toISOString().substr(11, 8);
@@ -230,6 +230,7 @@
       .labelAltitude(0.02);
     world.controls().autoRotate = true;
     world.controls().autoRotateSpeed = 0.3;
+    try { world.pointOfView({ lat: 15, lng: 10, altitude: 2.2 }); } catch (_) {}
   }
 
   function initSlGlobe() {
@@ -257,6 +258,7 @@
       .pathDashGap(0);
     slWorld.controls().autoRotate = true;
     slWorld.controls().autoRotateSpeed = 0.4;
+    try { slWorld.pointOfView({ lat: 20, lng: 0, altitude: 2.4 }); } catch (_) {}
   }
 
   async function ensureSat(meta) {
@@ -448,31 +450,86 @@
   }
 
   /* ========== STARLINK TRAINS ========== */
+  async function fetchStarlinkRecords() {
+    // Try OMM JSON group
+    try {
+      const data = await get(CONFIG.endpoints.tleStarlink);
+      if (Array.isArray(data) && data.length) return data;
+    } catch (e) { console.warn('SL JSON', e.message); }
+
+    // Try classic TLE text group
+    try {
+      const r = await fetch('https://celestrak.org/NORAD/elements/gp.php?GROUP=starlink&FORMAT=TLE');
+      if (r.ok) {
+        const txt = await r.text();
+        const lines = txt.trim().split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+        const out = [];
+        for (let i = 0; i < lines.length - 2; i++) {
+          if (lines[i].startsWith('1 ') && lines[i + 1].startsWith('2 ')) {
+            out.push({ line1: lines[i], line2: lines[i + 1], OBJECT_NAME: 'STARLINK' });
+            i++;
+          } else if (!lines[i].startsWith('1 ') && !lines[i].startsWith('2 ') &&
+                     lines[i + 1] && lines[i + 1].startsWith('1 ') &&
+                     lines[i + 2] && lines[i + 2].startsWith('2 ')) {
+            out.push({
+              OBJECT_NAME: lines[i],
+              line1: lines[i + 1],
+              line2: lines[i + 2]
+            });
+            i += 2;
+          }
+        }
+        if (out.length) return out;
+      }
+    } catch (e) { console.warn('SL TLE text', e.message); }
+
+    // Last resort: sample known Starlink NORAD IDs via ivanstanojevic
+    const sampleIds = [
+      44713, 44714, 44715, 44716, 44717, 44718, 44719, 44720,
+      44914, 45044, 45105, 45394, 45560, 45790, 46070, 46325,
+      46552, 46741, 47164, 47387, 47683, 47905, 48274, 48624,
+      48925, 49261, 49535, 49811, 50147, 50428, 50721, 51032
+    ];
+    const out = [];
+    for (const id of sampleIds) {
+      try {
+        const d = await get(`https://tle.ivanstanojevic.me/api/tle/${id}`);
+        if (d && d.line1) out.push(d);
+      } catch (_) {}
+    }
+    return out;
+  }
+
   async function loadStarlink() {
     initSlGlobe();
     try {
-      const data = await get(CONFIG.endpoints.tleStarlink);
+      const data = await fetchStarlinkRecords();
       if (!Array.isArray(data) || !data.length) {
         $('#sl-count').textContent = 'UNAVAILABLE';
-        $('#sl-trains').innerHTML = '<div class="sl-train"><div class="tm">Celestrak unavailable (CORS or rate limit). Retry later.</div></div>';
+        $('#sl-trains').innerHTML = '<div class="sl-train disabled"><div class="tm">No Starlink TLEs available (network/CORS). Click refresh to retry.</div></div>';
         return;
       }
 
       // Limit for performance — sample up to 600 active
       const sample = data.filter(d => {
-        const name = (d.OBJECT_NAME || d.object_name || '').toUpperCase();
-        return name.includes('STARLINK');
+        const name = (d.OBJECT_NAME || d.object_name || d.name || '').toUpperCase();
+        return !name || name.includes('STARLINK') || name.includes('SL-') || d.line1 || d.TLE_LINE1;
       }).slice(0, 800);
 
       starlinkSats = [];
       sample.forEach(item => {
         const rec = makeSatrec(item);
         if (!rec || rec.error) return;
-        const id = item.NORAD_CAT_ID || item.norad_cat_id;
-        const name = (item.OBJECT_NAME || item.object_name || 'STARLINK').replace('STARLINK ', 'SL-');
-        const raan = item.RA_OF_ASC_NODE ?? item.ra_of_asc_node ?? 0;
-        const inc = item.INCLINATION ?? item.inclination ?? 53;
-        const mm = item.MEAN_MOTION ?? item.mean_motion ?? 15.1;
+        const id = item.NORAD_CAT_ID || item.norad_cat_id || item.satelliteId || rec.satnum || 0;
+        const name = (item.OBJECT_NAME || item.object_name || item.name || ('STARLINK-' + id)).replace('STARLINK ', 'SL-');
+        // Prefer OMM fields; else derive approximate from satrec radians
+        let raan = item.RA_OF_ASC_NODE ?? item.ra_of_asc_node;
+        let inc = item.INCLINATION ?? item.inclination;
+        let mm = item.MEAN_MOTION ?? item.mean_motion;
+        if (raan == null && rec.nodeo != null) raan = rec.nodeo * 180 / Math.PI;
+        if (inc == null && rec.inclo != null) inc = rec.inclo * 180 / Math.PI;
+        if (mm == null && rec.no != null) mm = rec.no * 1440 / (2 * Math.PI); // rad/min -> rev/day
+        raan = raan ?? 0; inc = inc ?? 53; mm = mm ?? 15.1;
         starlinkSats.push({ id, name, satrec: rec, raan, inc, mm, pos: null });
       });
 
@@ -618,7 +675,7 @@
     const ctx = canvas.getContext('2d');
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
-    const cx = w / 2, cy = h / 2, R = Math.min(w, h) * 0.4;
+    const cx = w / 2, cy = h / 2, R = Math.min(w, h) * 0.4 * neoZoom;
     for (let i = 0; i < 40; i++) {
       ctx.globalAlpha = 0.3; ctx.fillStyle = '#8af';
       ctx.fillRect((i * 97) % w, (i * 53) % h, 1, 1);
@@ -874,6 +931,45 @@
     } catch (e) { console.error(e); }
   }
 
+
+  function bindGlobeControls() {
+    $$('.globe-controls').forEach(box => {
+      const which = box.dataset.globe;
+      box.querySelectorAll('button').forEach(btn => {
+        btn.onclick = e => {
+          e.stopPropagation();
+          const act = btn.dataset.act;
+          if (which === 'main' && world) {
+            const cam = world.camera();
+            const controls = world.controls();
+            if (act === 'in') cam.position.multiplyScalar(0.8);
+            if (act === 'out') cam.position.multiplyScalar(1.25);
+            if (act === 'reset') {
+              controls.reset();
+              world.pointOfView({ lat: 15, lng: 0, altitude: 2.2 }, 600);
+            }
+            controls.update();
+          } else if (which === 'starlink' && slWorld) {
+            const cam = slWorld.camera();
+            const controls = slWorld.controls();
+            if (act === 'in') cam.position.multiplyScalar(0.8);
+            if (act === 'out') cam.position.multiplyScalar(1.25);
+            if (act === 'reset') {
+              controls.reset();
+              slWorld.pointOfView({ lat: 20, lng: 0, altitude: 2.4 }, 600);
+            }
+            controls.update();
+          } else if (which === 'neo') {
+            if (act === 'in') neoZoom = Math.min(2.5, neoZoom * 1.2);
+            if (act === 'out') neoZoom = Math.max(0.6, neoZoom / 1.2);
+            if (act === 'reset') neoZoom = 1;
+            drawNeoGlobe();
+          }
+        };
+      });
+    });
+  }
+
   function bindCams() {
     $$('.cam-slot').forEach(slot => {
       slot.addEventListener('click', () => {
@@ -911,6 +1007,7 @@
     initGlobe();
     initSlGlobe();
     bindCams();
+    bindGlobeControls();
     loadMajorSats();
     loadStarlink();
     setInterval(updateMajorGlobe, CONFIG.satMs);

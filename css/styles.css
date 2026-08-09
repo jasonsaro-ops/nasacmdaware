@@ -156,11 +156,20 @@ body {
 .console {
   height: calc(100vh - 42px);
   display: grid;
-  grid-template-columns: 1.35fr 0.95fr 1.15fr;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 0.95fr) minmax(0, 1.15fr);
   gap: 4px;
   padding: 4px;
+  overflow: hidden;
+  width: 100%;
 }
-.col { display: flex; flex-direction: column; gap: 4px; min-height: 0; }
+.col {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
 
 /* PANELS — Martian technical frame */
 .panel {
@@ -231,19 +240,57 @@ body {
 }
 
 /* GLOBE STAGES */
-.tile-sat { flex: 1; min-height: 0; }
+.tile-sat { flex: 1.35; min-height: 0; }
 .tile-starlink { flex: 1.6; min-height: 0; }
 .globe-stage {
   flex: 1;
   position: relative;
-  min-height: 100px;
+  min-height: 80px;
   background: #000;
+  overflow: hidden;
 }
 #globe-container, #sl-globe-container {
-  width: 100%; height: 100%;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  position: relative;
 }
 #globe-container canvas, #sl-globe-container canvas {
-  display: block;
+  display: block !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+}
+
+/* Globe zoom / reset controls */
+.globe-controls {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.globe-controls button {
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--border2);
+  background: rgba(5, 14, 22, 0.9);
+  color: var(--cyan);
+  font-family: var(--mono);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+.globe-controls button:hover {
+  border-color: var(--cyan);
+  background: rgba(0, 232, 255, 0.12);
+}
+.globe-controls button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  color: var(--muted);
 }
 
 .sat-toggles {
@@ -406,7 +453,7 @@ body {
 .sl-sat-row .sn { color: var(--text); min-width: 50px; }
 
 /* NEO */
-.tile-neo { flex: 1.1; }
+.tile-neo { flex: 0.9; min-height: 0; }
 .neo-split {
   display: grid;
   grid-template-columns: 1fr 130px;
@@ -645,13 +692,13 @@ body {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border2); }
 
-@media (max-width: 1200px) {
-  .console { grid-template-columns: 1fr 1fr; }
-  .feeds { grid-column: 1 / -1; flex-direction: row; flex-wrap: wrap; }
-  .feeds .panel { flex: 1 1 45%; min-height: 110px; }
-  .sl-body { grid-template-columns: 1fr 140px; }
+@media (max-width: 1100px) {
+  .console { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .feeds { grid-column: 1 / -1; max-height: 280px; flex-direction: row; flex-wrap: wrap; }
+  .feeds .panel { flex: 1 1 40%; min-height: 140px; }
+  .tile-starlink { flex: 1 1 100%; min-height: 200px; }
 }
-@media (max-width: 700px) {
+@media (max-width: 640px) {
   .console { grid-template-columns: 1fr; height: auto; overflow: auto; }
   body { overflow: auto; }
   .neo-split, .sl-body { grid-template-columns: 1fr; }
