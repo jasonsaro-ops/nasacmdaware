@@ -92,21 +92,63 @@
     } catch (_) { return null; }
   }
 
-  function orbitPath(satrec, stepMin, totalMin) {
-    const pts = [];
+  function orbitPathSplit(satrec, stepMin, halfMin) {
+    const past = [], future = [];
     const now = new Date();
-    for (let m = -totalMin / 2; m <= totalMin / 2; m += stepMin) {
+    for (let m = -halfMin; m <= 0; m += stepMin) {
       const p = propPos(satrec, new Date(now.getTime() + m * 60000));
-      if (p) pts.push([p.lat, p.lon]);
+      if (p) past.push([p.lat, p.lon]);
     }
-    return pts;
+    for (let m = 0; m <= halfMin; m += stepMin) {
+      const p = propPos(satrec, new Date(now.getTime() + m * 60000));
+      if (p) future.push([p.lat, p.lon]);
+    }
+    return { past, future };
   }
 
   function makeSatrec(item) {
     try {
-      if (item.EPOCH && item.MEAN_MOTION) return satellite.json2satrec(item);
-      if (item.TLE_LINE1 && item.TLE_LINE2) return satellite.twoline2satrec(item.TLE_LINE1, item.TLE_LINE2);
-    } catch (_) {}
+      if (!item) return null;
+      if (item.EPOCH && (item.MEAN_MOTION || item.mean_motion)) {
+        return satellite.json2satrec(item);
+      }
+      const l1 = item.TLE_LINE1 || item.tle1 || item.line1;
+      const l2 = item.TLE_LINE2 || item.tle2 || item.line2;
+      if (l1 && l2) return satellite.twoline2satrec(l1, l2);
+      // ivanstanojevic format
+      if (item.line1 && item.line2) return satellite.twoline2satrec(item.line1, item.line2);
+    } catch (e) { console.warn('makeSatrec', e); }
+    return null;
+  }
+
+  async function fetchTLE(noradId) {
+    const id = String(noradId);
+    const sources = [
+      `https://celestrak.org/NORAD/elements/gp.php?CATNR=${id}&FORMAT=JSON`,
+      `https://tle.ivanstanojevic.me/api/tle/${id}`
+    ];
+    for (const url of sources) {
+      try {
+        const data = await get(url);
+        // Celestrak returns array of OMM objects
+        if (Array.isArray(data) && data.length) {
+          const rec = makeSatrec(data[0]);
+          if (rec && !rec.error) return rec;
+        }
+        // Single OMM object
+        if (data && data.NORAD_CAT_ID) {
+          const rec = makeSatrec(data);
+          if (rec && !rec.error) return rec;
+        }
+        // ivanstanojevic: { line1, line2, name, satelliteId }
+        if (data && (data.line1 || data.TLE_LINE1)) {
+          const rec = makeSatrec(data);
+          if (rec && !rec.error) return rec;
+        }
+      } catch (e) {
+        console.warn('TLE source failed', url, e.message);
+      }
+    }
     return null;
   }
 
@@ -123,18 +165,24 @@
       .atmosphereColor('#4a9eff')
       .atmosphereAltitude(0.14)
       .pointsData([])
-      .pointAltitude(0.012)
-      .pointRadius(0.5)
+      .pointAltitude(0.015)
+      .pointRadius(0.55)
       .pointColor('color')
       .pathsData([])
+      .pathPoints('coords')
+      .pathPointLat(p => p[0])
+      .pathPointLng(p => p[1])
+      .pathPointAlt(0.012)
       .pathColor('color')
-      .pathStroke(0.7)
-      .pathPointAlt(0.008)
+      .pathStroke('stroke')
+      .pathDashLength('dash')
+      .pathDashGap(d => d.dash ? 0.8 : 0)
+      .pathDashAnimateTime(0)
       .labelsData([])
       .labelText('name')
-      .labelSize(1.1)
+      .labelSize(1.15)
       .labelColor('color')
-      .labelDotRadius(0.25)
+      .labelDotRadius(0.3)
       .labelAltitude(0.02);
     world.controls().autoRotate = true;
     world.controls().autoRotateSpeed = 0.3;
@@ -152,51 +200,89 @@
       .atmosphereAltitude(0.12)
       .pointsData([])
       .pointAltitude(0.01)
-      .pointRadius(0.25)
+      .pointRadius(0.28)
       .pointColor('color')
       .pathsData([])
+      .pathPoints('coords')
+      .pathPointLat(p => p[0])
+      .pathPointLng(p => p[1])
+      .pathPointAlt(0.008)
       .pathColor('color')
-      .pathStroke(0.4)
-      .pathPointAlt(0.006);
+      .pathStroke(0.45)
+      .pathDashLength(0)
+      .pathDashGap(0);
     slWorld.controls().autoRotate = true;
     slWorld.controls().autoRotateSpeed = 0.4;
   }
 
+  async function ensureSat(meta) {
+    if (satRecords[meta.id] && satRecords[meta.id].satrec) return satRecords[meta.id];
+    const rec = await fetchTLE(meta.id);
+    if (rec) {
+      satRecords[meta.id] = {
+        satrec: rec,
+        name: meta.name,
+        color: meta.color,
+        enabled: true,
+        primary: !!meta.primary
+      };
+      return satRecords[meta.id];
+    }
+    // Placeholder so toggle UI works; ISS can still use WTIA
+    if (!satRecords[meta.id]) {
+      satRecords[meta.id] = {
+        satrec: null,
+        name: meta.name,
+        color: meta.color,
+        enabled: meta.id === 25544,
+        primary: !!meta.primary,
+        noTle: true
+      };
+    }
+    return satRecords[meta.id];
+  }
+
   async function loadMajorSats() {
     initGlobe();
-    const wanted = new Map(CONFIG.sats.map(s => [s.id, s]));
-    const urls = [CONFIG.endpoints.tleStations, CONFIG.endpoints.tleVisual, CONFIG.endpoints.tleWeather, CONFIG.endpoints.tleResource];
-    const all = [];
-    for (const url of urls) {
-      try {
-        const data = await get(url);
-        if (Array.isArray(data)) all.push(...data);
-      } catch (e) { console.warn('TLE', e.message); }
-    }
-    all.forEach(item => {
-      const id = item.NORAD_CAT_ID || item.norad_cat_id;
-      if (!wanted.has(id)) return;
-      const meta = wanted.get(id);
-      const rec = makeSatrec(item);
-      if (!rec || rec.error) return;
-      satRecords[id] = { satrec: rec, name: meta.name, color: meta.color, enabled: true, primary: !!meta.primary };
-    });
+    // Fetch every configured sat individually (more reliable than group files + CORS)
+    await Promise.all(CONFIG.sats.map(s => ensureSat(s)));
 
     const tog = $('#sat-toggles');
     tog.innerHTML = '<div class="hd">ASSETS</div>' + CONFIG.sats.map(s => {
-      const on = !!satRecords[s.id] || s.id === 25544;
+      const rec = satRecords[s.id];
+      const hasData = rec && (rec.satrec || s.id === 25544);
+      const checked = rec && rec.enabled !== false && hasData;
       return `<label data-id="${s.id}">
-        <input type="checkbox" ${on ? 'checked' : ''} ${on ? '' : 'disabled'}>
+        <input type="checkbox" ${checked ? 'checked' : ''} ${hasData ? '' : 'disabled'} title="${hasData ? s.name : 'TLE unavailable'}">
         <i class="dot" style="background:${s.color}"></i>${s.name}
       </label>`;
     }).join('');
+
     tog.querySelectorAll('label').forEach(lab => {
-      lab.querySelector('input').onchange = e => {
+      const input = lab.querySelector('input');
+      input.onchange = async e => {
         const id = +lab.dataset.id;
-        if (satRecords[id]) { satRecords[id].enabled = e.target.checked; updateMajorGlobe(); }
+        const meta = CONFIG.sats.find(s => s.id === id);
+        if (!satRecords[id] || !satRecords[id].satrec) {
+          if (meta) {
+            input.disabled = true;
+            await ensureSat(meta);
+            input.disabled = false;
+          }
+        }
+        if (satRecords[id]) {
+          satRecords[id].enabled = e.target.checked;
+          if (!satRecords[id].satrec && id !== 25544) {
+            e.target.checked = false;
+            satRecords[id].enabled = false;
+          }
+        }
+        updateMajorGlobe();
       };
     });
-    $('#sat-count').textContent = Object.keys(satRecords).length + ' SATS';
+
+    const ready = Object.values(satRecords).filter(r => r.satrec || r.primary).length;
+    $('#sat-count').textContent = ready + ' SATS';
     updateMajorGlobe();
   }
 
@@ -209,32 +295,82 @@
       const id = +idStr;
       const rec = satRecords[id];
       if (!rec || !rec.enabled) return;
-      const pos = propPos(rec.satrec, now);
-      if (!pos) return;
-      const pathPts = orbitPath(rec.satrec, 3, 100);
-      points.push({ lat: pos.lat, lng: pos.lon, color: rec.color, name: rec.name, id });
-      labels.push({ lat: pos.lat, lng: pos.lon, name: rec.name, color: rec.color });
-      if (pathPts.length > 2) paths.push({ coords: pathPts.map(p => [p[0], p[1]]), color: rec.color });
-      barRows.push({ id, name: rec.name, color: rec.color, ...pos });
+
+      let pos = null;
+      if (rec.satrec) pos = propPos(rec.satrec, now);
+      if (!pos && id !== 25544) return;
+
+      if (pos) {
+        points.push({ lat: pos.lat, lng: pos.lon, color: rec.color, name: rec.name, id });
+        labels.push({ lat: pos.lat, lng: pos.lon, name: rec.name, color: rec.color });
+        barRows.push({ id, name: rec.name, color: rec.color, ...pos });
+      }
+
+      if (rec.satrec) {
+        const { past, future } = orbitPathSplit(rec.satrec, 2, 50);
+        // Solid past track
+        if (past.length > 2) {
+          paths.push({ coords: past, color: rec.color, stroke: rec.primary ? 1.2 : 0.7, dash: 0 });
+        }
+        // Dashed future track
+        if (future.length > 2) {
+          paths.push({ coords: future, color: rec.color, stroke: rec.primary ? 1.0 : 0.55, dash: 0.6 });
+        }
+      }
     });
 
-    // ISS WTIA overlay
-    get(CONFIG.endpoints.iss).then(d => {
+    // ISS high-accuracy position + optional future from WTIA timestamps
+    get(CONFIG.endpoints.iss).then(async d => {
       const lat = d.latitude, lon = d.longitude, alt = d.altitude, vel = d.velocity;
       const ix = points.findIndex(p => p.id === 25544);
       const pt = { lat, lng: lon, color: '#ffffff', name: 'ISS', id: 25544 };
       if (ix >= 0) points[ix] = pt; else points.push(pt);
+
+      const li = labels.findIndex(l => l.name === 'ISS');
+      const lab = { lat, lng: lon, name: 'ISS', color: '#ffffff' };
+      if (li >= 0) labels[li] = lab; else labels.push(lab);
+
       const bi = barRows.findIndex(b => b.id === 25544);
       const row = { id: 25544, name: 'ISS', color: '#ffffff', lat, lon, alt, vel };
       if (bi >= 0) barRows[bi] = row; else barRows.push(row);
+
+      // If no TLE path for ISS yet, synthesize future from positions API
+      const hasIssPath = paths.some(p => p.color === '#ffffff');
+      if (!hasIssPath) {
+        try {
+          const nowTs = Math.floor(Date.now() / 1000);
+          const ts = [];
+          for (let i = -15; i <= 18; i++) ts.push(nowTs + i * 300);
+          const fut = await get(`https://api.wheretheiss.at/v1/satellites/25544/positions?timestamps=${ts.join(',')}`);
+          if (Array.isArray(fut) && fut.length > 2) {
+            const past = fut.filter(p => p.timestamp <= nowTs).map(p => [p.latitude, p.longitude]);
+            const future = fut.filter(p => p.timestamp >= nowTs).map(p => [p.latitude, p.longitude]);
+            if (past.length > 1) paths.push({ coords: past, color: '#ffffff', stroke: 1.3, dash: 0 });
+            if (future.length > 1) paths.push({ coords: future, color: '#ffffff', stroke: 1.1, dash: 0.6 });
+          }
+        } catch (_) {}
+      }
+
+      if (satRecords[25544]) {
+        satRecords[25544].enabled = true;
+        satRecords[25544].pos = { lat, lon, alt, vel };
+      }
       paintMajor(points, paths, labels, barRows);
     }).catch(() => paintMajor(points, paths, labels, barRows));
   }
 
   function paintMajor(points, paths, labels, barRows) {
-    world.pointsData(points).pointColor(d => d.color)
-      .pathsData(paths).pathColor(d => d.color)
-      .labelsData(labels).labelColor(d => d.color);
+    world
+      .pointsData(points)
+      .pointColor(d => d.color)
+      .pathsData(paths)
+      .pathColor(d => d.color)
+      .pathStroke(d => d.stroke || 0.7)
+      .pathDashLength(d => d.dash || 0)
+      .pathDashGap(d => d.dash ? 0.9 : 0)
+      .labelsData(labels)
+      .labelColor(d => d.color);
+
     const bar = $('#sat-bar');
     bar.innerHTML = barRows.map(s => `
       <div class="sb ${s.id === focusId ? 'active' : ''}" data-id="${s.id}">
@@ -263,7 +399,8 @@
         <tr><th>Longitude</th><td>${s.lon.toFixed(4)}°</td></tr>
         <tr><th>Altitude</th><td>${s.alt.toFixed(2)} km</td></tr>
         <tr><th>Velocity</th><td>${Math.round(s.vel).toLocaleString()} km/h</td></tr>
-      </table>`, 340, 300);
+      </table>
+      <p style="margin-top:8px">Solid path = past · Dashed path = predicted future (~50 min each side).</p>`, 340, 310);
   }
 
   /* ========== STARLINK TRAINS ========== */
@@ -378,17 +515,20 @@
       if (!pos) return;
       s.pos = pos;
       points.push({ lat: pos.lat, lng: pos.lon, color: train.color, name: s.name, id: s.id });
-      if (idx < 12) {
-        const pathPts = orbitPath(s.satrec, 4, 95);
-        if (pathPts.length > 2) {
-          paths.push({ coords: pathPts.map(p => [p[0], p[1]]), color: train.color });
-        }
+      if (idx < 10) {
+        const { past, future } = orbitPathSplit(s.satrec, 4, 48);
+        if (past.length > 2) paths.push({ coords: past, color: train.color, stroke: 0.4, dash: 0 });
+        if (future.length > 2) paths.push({ coords: future, color: train.color, stroke: 0.35, dash: 0.5 });
       }
       telemRows.push({ ...s, ...pos });
     });
 
     slWorld.pointsData(points).pointColor(d => d.color)
-      .pathsData(paths).pathColor(d => d.color);
+      .pathsData(paths)
+      .pathColor(d => d.color)
+      .pathStroke(d => d.stroke || 0.4)
+      .pathDashLength(d => d.dash || 0)
+      .pathDashGap(d => d.dash ? 0.8 : 0);
 
     $('#sl-telem').innerHTML = `
       <div class="sl-telem-h">${train.label} · ${telemRows.length} SATS</div>
